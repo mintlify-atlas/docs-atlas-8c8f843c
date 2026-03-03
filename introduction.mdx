@@ -1,0 +1,99 @@
+---
+title: Introduction
+description: Fumi is a small, simple, and ultrafast SMTP server framework built on Bun with composable middleware
+---
+
+# Welcome to Fumi
+
+Fumi - **means letter✉️ in Japanese** - is a small, simple, and ultrafast SMTP server framework built on Bun.
+
+```ts
+import { Fumi } from "@puiusabin/fumi";
+
+const app = new Fumi({ authOptional: true });
+
+app.onMailFrom(async (ctx, next) => {
+  if (ctx.address.address.endsWith("@blocked.example")) {
+    ctx.reject("Domain blocked", 550);
+  }
+  await next();
+});
+
+await app.listen(2525);
+```
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="Ultrafast" icon="rocket">
+    Runs natively on Bun. No adapter layer, no Node.js compatibility overhead.
+  </Card>
+  
+  <Card title="Lightweight" icon="feather">
+    Tiny core with one runtime dependency (`bun-smtp`). Minimal footprint.
+  </Card>
+  
+  <Card title="Middleware System" icon="link">
+    Koa-style `(ctx, next)` chains per SMTP phase: connect, auth, mailFrom, rcptTo, data, close.
+  </Card>
+  
+  <Card title="Plugin System" icon="plug">
+    A plugin is just `(app: Fumi) => void`. No registry, no lifecycle hooks.
+  </Card>
+  
+  <Card title="TypeScript First" icon="code">
+    First-class TypeScript support with complete type definitions for all contexts.
+  </Card>
+  
+  <Card title="Delightful DX" icon="face-smile">
+    Super clean APIs with intuitive phase-based middleware registration.
+  </Card>
+</CardGroup>
+
+## SMTP Phase Middleware
+
+Fumi provides middleware hooks for every SMTP phase:
+
+- **onConnect** - Validate connections before accepting them
+- **onAuth** - Implement custom authentication logic
+- **onMailFrom** - Validate sender addresses
+- **onRcptTo** - Validate recipient addresses
+- **onData** - Process email message data
+- **onClose** - Cleanup when connections close
+
+Each middleware receives a context object with session information and a `next()` function to continue the chain.
+
+## Built-in Plugins
+
+Fumi includes several ready-to-use plugins:
+
+- **logger** - Logs each SMTP phase to stdout
+- **denylist** - Blocks connections from specific IP addresses
+- **senderBlock** - Rejects mail from blocked domains
+- **rcptFilter** - Restricts recipients to allowed domains
+- **requireTls** - Enforces TLS encryption
+- **maxSize** - Rejects oversized messages
+
+## Get Started
+
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/installation">
+    Install Fumi with Bun and verify your setup
+  </Card>
+  
+  <Card title="Quick Start" icon="bolt" href="/quickstart">
+    Build your first SMTP server in minutes
+  </Card>
+  
+  <Card title="Middleware Guide" icon="link" href="/guides/middleware">
+    Learn how to use middleware to control SMTP phases
+  </Card>
+  
+  <Card title="Plugin Development" icon="plug" href="/guides/plugins">
+    Create and share your own Fumi plugins
+  </Card>
+</CardGroup>
+
+<Warning>
+**STARTTLS is not production-ready.** Bun does not support `socket.upgradeTLS()` on server-side sockets, which means the STARTTLS command will crash or silently fail. In production, use implicit TLS (port 465) or terminate TLS externally with HAProxy or stunnel.
+</Warning>

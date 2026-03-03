@@ -1,0 +1,326 @@
+---
+title: Authentication
+description: Learn how to implement SMTP authentication in Fumi using the onAuth middleware
+---
+
+Fumi provides flexible authentication through the `onAuth` middleware, allowing you to validate credentials and control access to your SMTP server.
+
+## Basic Authentication
+
+Use the `onAuth` middleware to handle authentication requests. You must call either `ctx.accept()` or `ctx.reject()` to complete the authentication flow.
+
+```ts
+import { Fumi } from "@puiusabin/fumi";
+
+const app = new Fumi({ authMethods: ["PLAIN"], allowInsecureAuth: true });
+
+app.onAuth(async (ctx, next) => {
+  const { username, password } = ctx.credentials;
+  
+  if (username === "admin" && password === "secret") {
+    ctx.accept({ id: 1, username });
+  } else {
+    ctx.reject("Bad credentials", 535);
+  }
+  
+  await next();
+});
+
+await app.listen(25);
+```
+
+## Credentials Object
+
+The `ctx.credentials` object provides authentication information:
+
+```ts
+interface Credentials {
+  method: string;                              // Auth method (e.g., "PLAIN", "LOGIN")
+  username: string;                            // Username from client
+  password: string;                            // Password from client
+  validatePassword: (password: string) => boolean;  // Helper to validate password
+}
+```
+
+### Using validatePassword
+
+The `validatePassword` helper method simplifies password validation:
+
+```ts
+app.onAuth(async (ctx, next) => {
+  const { username, credentials } = ctx;
+  
+  const user = await db.getUserByUsername(credentials.username);
+  
+  if (user && credentials.validatePassword(user.passwordHash)) {
+    ctx.accept(user);
+  } else {
+    ctx.reject("Authentication failed", 535);
+  }
+  
+  await next();
+});
+```
+
+## Accept and Reject Patterns
+
+<Steps>
+
+### Accept Authentication
+
+Call `ctx.accept(user)` to grant access. The `user` object is stored in `ctx.session.user` for subsequent middleware:
+
+```ts
+app.onAuth(async (ctx, next) => {
+  const user = await validateCredentials(ctx.credentials);
+  
+  if (user) {
+    ctx.accept({ id: user.id, email: user.email });
+  }
+  
+  await next();
+});
+
+app.onMailFrom(async (ctx, next) => {
+  // Access authenticated user
+  console.log("User:", ctx.session.user);
+  await next();
+});
+```
+
+### Reject Authentication
+
+Call `ctx.reject()` to deny access. You can customize the error message and response code:
+
+```ts
+app.onAuth(async (ctx) => {
+  // Default: "Rejected", code 535
+  ctx.reject();
+  
+  // Custom message
+  ctx.reject("Invalid credentials");
+  
+  // Custom message and code
+  ctx.reject("Account locked", 535);
+});
+```
+
+### Implicit Rejection
+
+If you don't call `ctx.accept()` in any middleware, authentication automatically fails with code 535:
+
+```ts
+app.onAuth(async (ctx, next) => {
+  // Forgot to call ctx.accept() - results in 535 error
+  await next();
+});
+```
+
+</Steps>
+
+## Authentication Options
+
+Configure authentication behavior in `FumiOptions`:
+
+```ts
+interface FumiOptions {
+  authMethods?: string[];      // Supported methods (e.g., ["PLAIN", "LOGIN"])
+  authOptional?: boolean;      // Allow connections without authentication
+  allowInsecureAuth?: boolean; // Allow auth over unencrypted connections
+}
+```
+
+### Optional Authentication
+
+Allow both authenticated and anonymous connections:
+
+```ts
+const app = new Fumi({ 
+  authOptional: true,
+  authMethods: ["PLAIN", "LOGIN"]
+});
+
+app.onAuth(async (ctx, next) => {
+  // Validate when client attempts auth
+  const user = await validateUser(ctx.credentials);
+  
+  if (user) {
+    ctx.accept(user);
+  } else {
+    ctx.reject("Invalid credentials", 535);
+  }
+  
+  await next();
+});
+
+app.onMailFrom(async (ctx, next) => {
+  // Check if user authenticated
+  if (ctx.session.user) {
+    console.log("Authenticated user:", ctx.session.user);
+  } else {
+    console.log("Anonymous connection");
+  }
+  
+  await next();
+});
+```
+
+### Supported Auth Methods
+
+Specify which authentication mechanisms to advertise:
+
+```ts
+const app = new Fumi({ 
+  authMethods: ["PLAIN", "LOGIN", "CRAM-MD5"]
+});
+```
+
+If not specified, the underlying SMTP server uses its defaults.
+
+### Secure Authentication
+
+By default, authentication over unencrypted connections is blocked. Enable it explicitly:
+
+```ts
+const app = new Fumi({ 
+  authMethods: ["PLAIN"],
+  allowInsecureAuth: true  // ⚠️ Only for development/testing
+});
+```
+
+<Warning>
+  Always use TLS in production when handling authentication. See the [TLS & Security](/guides/tls-security) guide.
+</Warning>
+
+## Real-World Examples
+
+### Database Authentication
+
+```ts
+import { Fumi } from "@puiusabin/fumi";
+import { db } from "./db";
+
+const app = new Fumi({ 
+  authMethods: ["PLAIN"],
+  secure: true,  // TLS required
+  key: await Bun.file("./key.pem").text(),
+  cert: await Bun.file("./cert.pem").text()
+});
+
+app.onAuth(async (ctx, next) => {
+  const user = await db.users.findOne({ 
+    username: ctx.credentials.username 
+  });
+  
+  if (!user) {
+    ctx.reject("User not found", 535);
+  }
+  
+  const validPassword = await Bun.password.verify(
+    ctx.credentials.password,
+    user.passwordHash
+  );
+  
+  if (!validPassword) {
+    ctx.reject("Invalid password", 535);
+  }
+  
+  ctx.accept({ 
+    id: user.id, 
+    email: user.email,
+    domain: user.domain
+  });
+  
+  await next();
+});
+
+await app.listen(465);
+```
+
+### Rate-Limited Authentication
+
+```ts
+import { Fumi } from "@puiusabin/fumi";
+
+const failedAttempts = new Map<string, number>();
+
+const app = new Fumi({ authMethods: ["PLAIN"] });
+
+app.onAuth(async (ctx, next) => {
+  const ip = ctx.session.remoteAddress;
+  const attempts = failedAttempts.get(ip) || 0;
+  
+  if (attempts >= 5) {
+    ctx.reject("Too many failed attempts", 421);
+  }
+  
+  const valid = await validateCredentials(ctx.credentials);
+  
+  if (valid) {
+    failedAttempts.delete(ip);
+    ctx.accept(valid);
+  } else {
+    failedAttempts.set(ip, attempts + 1);
+    ctx.reject("Authentication failed", 535);
+  }
+  
+  await next();
+});
+```
+
+### Role-Based Access
+
+```ts
+app.onAuth(async (ctx, next) => {
+  const user = await authenticate(ctx.credentials);
+  
+  if (user) {
+    ctx.accept(user);
+  } else {
+    ctx.reject("Authentication failed", 535);
+  }
+  
+  await next();
+});
+
+app.onMailFrom(async (ctx, next) => {
+  const user = ctx.session.user as { role: string };
+  
+  // Only admins can send from any address
+  if (user.role !== "admin") {
+    const senderDomain = ctx.address.address.split("@")[1];
+    if (senderDomain !== user.domain) {
+      ctx.reject("Not authorized to send from this domain", 550);
+    }
+  }
+  
+  await next();
+});
+```
+
+## Session Context
+
+The authenticated user is available in `session.user` for all subsequent middleware:
+
+```ts
+interface Session {
+  id: string;
+  secure: boolean;
+  remoteAddress: string;
+  clientHostname: string;
+  openingCommand: string;
+  user: unknown;              // Set by ctx.accept(user)
+  envelope: Envelope;
+  transmissionType: string;
+}
+```
+
+Access it in any middleware after authentication:
+
+```ts
+app.onData(async (ctx, next) => {
+  const user = ctx.session.user;
+  console.log(`Receiving message from user:`, user);
+  await next();
+});
+```

@@ -1,80 +1,221 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: "Quick start"
+description: "Get up and running with Fumi in under 5 minutes"
 ---
 
-## Get started in three steps
+Build your first SMTP server with Fumi in just a few steps.
 
-Get your documentation site running locally and make your first customization.
+## Basic server
 
-### Step 1: Set up your local environment
+<Steps>
+  <Step title="Install Fumi">
+    Add Fumi to your project using Bun:
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+    ```bash
+    bun add @puiusabin/fumi
+    ```
+  </Step>
 
-### Step 2: Deploy your changes
+  <Step title="Create your server">
+    Create a new file `server.ts` with a basic SMTP server:
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+    ```typescript server.ts
+    import { Fumi } from "@puiusabin/fumi";
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+    const app = new Fumi({ authOptional: true });
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+    app.onMailFrom(async (ctx, next) => {
+      if (ctx.address.address.endsWith("@blocked.example")) {
+        ctx.reject("Domain blocked", 550);
+      }
+      await next();
+    });
 
-### Step 3: Go live
+    await app.listen(2525);
+    console.log("SMTP server listening on port 2525");
+    ```
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+    This creates an SMTP server that:
+    - Listens on port 2525
+    - Allows unauthenticated connections
+    - Blocks emails from `@blocked.example` domain
+  </Step>
+
+  <Step title="Run your server">
+    Start the server with Bun:
+
+    ```bash
+    bun server.ts
+    ```
+  </Step>
+</Steps>
+
+## Testing your server
+
+Test your SMTP server using telnet:
+
+```bash
+telnet localhost 2525
+```
+
+Then send SMTP commands:
+
+```
+EHLO localhost
+MAIL FROM:<sender@example.com>
+RCPT TO:<recipient@example.com>
+DATA
+Subject: Test Email
+
+This is a test email.
+.
+QUIT
+```
+
+<Tip>
+  Press Ctrl+] then type `quit` to exit telnet if you get stuck.
+</Tip>
+
+You can also test with nodemailer:
+
+```typescript test-client.ts
+import nodemailer from "nodemailer";
+
+const transporter = nodemailer.createTransport({
+  host: "localhost",
+  port: 2525,
+  secure: false,
+  tls: {
+    rejectUnauthorized: false,
+  },
+});
+
+await transporter.sendMail({
+  from: "sender@example.com",
+  to: "recipient@example.com",
+  subject: "Test Email",
+  text: "This is a test email.",
+});
+
+console.log("Email sent successfully!");
+```
+
+## Using plugins
+
+Fumi comes with built-in plugins for common tasks. Here's how to add logging and IP blocking:
+
+```typescript
+import { Fumi } from "@puiusabin/fumi";
+import { logger } from "@puiusabin/fumi/plugins/logger";
+import { denylist } from "@puiusabin/fumi/plugins/denylist";
+
+const app = new Fumi({ authOptional: true });
+
+// Add logging
+app.use(logger());
+
+// Block specific IPs
+app.use(denylist(["192.168.1.100", "10.0.0.50"]));
+
+await app.listen(2525);
+```
+
+The logger plugin will output connection details:
+
+```
+[connect] 127.0.0.1
+[mail from] sender@example.com
+[rcpt to] recipient@example.com
+[close] 127.0.0.1
+```
+
+## Adding custom middleware
+
+Add your own middleware to any SMTP phase using the Koa-style `(ctx, next)` pattern:
+
+```typescript
+import { Fumi } from "@puiusabin/fumi";
+
+const app = new Fumi({ authOptional: true });
+
+// Limit number of recipients
+app.onRcptTo(async (ctx, next) => {
+  const recipientCount = ctx.session.envelope.rcptTo.length;
+  
+  if (recipientCount >= 10) {
+    ctx.reject("Too many recipients (max 10)", 452);
+  }
+  
+  await next();
+});
+
+await app.listen(2525);
+```
+
+<Note>
+  Middleware runs in the order it's registered. Call `await next()` to continue the chain, or `ctx.reject()` to stop processing.
+</Note>
+
+## Common use cases
+
+### Block specific domains
+
+```typescript
+app.onMailFrom(async (ctx, next) => {
+  const domain = ctx.address.address.split("@")[1];
+  const blockedDomains = ["spam.com", "blocked.net"];
+  
+  if (blockedDomains.includes(domain)) {
+    ctx.reject("Domain not allowed", 550);
+  }
+  
+  await next();
+});
+```
+
+### Limit recipients per message
+
+```typescript
+app.onRcptTo(async (ctx, next) => {
+  if (ctx.session.envelope.rcptTo.length >= 5) {
+    ctx.reject("Maximum 5 recipients allowed", 452);
+  }
+  await next();
+});
+```
+
+### Require authentication
+
+```typescript
+const app = new Fumi({ authOptional: false });
+
+app.onAuth(async (ctx, next) => {
+  const { username, password } = ctx.credentials;
+  
+  // Check against your user database
+  if (username === "user" && password === "pass") {
+    ctx.accept({ username, role: "user" });
+  } else {
+    ctx.reject("Invalid credentials", 535);
+  }
+  
+  await next();
+});
+```
 
 ## Next steps
 
-Now that you have your docs running, explore these key features:
-
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="Core concepts" icon="book" href="/concepts/middleware">
+    Learn about middleware, context, and sessions
+  </Card>
+  <Card title="Built-in plugins" icon="plug" href="/plugins/logger">
+    Explore all available plugins
+  </Card>
+  <Card title="TLS setup" icon="lock" href="/guides/tls-security">
+    Configure TLS for secure connections
+  </Card>
+  <Card title="API reference" icon="code" href="/api/fumi">
+    View complete API documentation
+  </Card>
 </CardGroup>
-
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>

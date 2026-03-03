@@ -1,0 +1,111 @@
+---
+title: Require TLS
+description: Enforce encrypted connections for SMTP transactions
+---
+
+The `requireTls` plugin enforces transport layer security by rejecting MAIL FROM commands on unencrypted connections. This ensures that email transmission occurs over secure, encrypted channels.
+
+## What It Does
+
+The requireTls plugin:
+- Checks if the connection is encrypted when MAIL FROM is received
+- Rejects the command if the connection is not secure
+- Returns the RFC 3207 standard 530 error code for unencrypted attempts
+- Works in conjunction with STARTTLS to enforce encryption
+
+## Function Signature
+
+```typescript
+function requireTls(): Plugin
+```
+
+The `requireTls` function takes no parameters and returns a Fumi plugin.
+
+## Usage
+
+Import and use the requireTls plugin in your Fumi application:
+
+```typescript
+import { Fumi } from "fumi";
+import { requireTls } from "fumi/plugins";
+
+const app = new Fumi({
+  // Enable STARTTLS with certificates
+  tls: {
+    key: await Bun.file("./key.pem").text(),
+    cert: await Bun.file("./cert.pem").text(),
+  }
+});
+
+// Require TLS for all mail transactions
+app.use(requireTls());
+
+app.listen();
+```
+
+## How It Works
+
+The plugin works with STARTTLS:
+
+1. Client connects to the server (unencrypted)
+2. Server advertises STARTTLS capability
+3. Client must issue STARTTLS command to upgrade to encrypted connection
+4. If client tries MAIL FROM without upgrading, the plugin rejects it
+5. If client has upgraded, the mail transaction proceeds normally
+
+## Error Response
+
+When a client attempts MAIL FROM on an unencrypted connection:
+
+```
+530 Must issue STARTTLS first
+```
+
+The 530 status code is the standard RFC 3207 response for "Must issue a STARTTLS command first".
+
+## Implementation
+
+```typescript
+export function requireTls(): Plugin {
+  return (app) => {
+    app.onMailFrom(async (ctx, next) => {
+      if (!ctx.session.secure) {
+        ctx.reject("Must issue STARTTLS first", 530);
+      }
+      await next();
+    });
+  };
+}
+```
+
+The plugin checks `ctx.session.secure` which is `true` if the connection has been upgraded via STARTTLS or was initially TLS-encrypted.
+
+<Note>
+**Middleware vs Protocol-Level Enforcement**
+
+This plugin provides middleware-level TLS enforcement at the MAIL FROM stage. For protocol-level enforcement that requires TLS before any commands are accepted, set `requireTLS: true` in `FumiOptions` instead:
+
+```typescript
+const app = new Fumi({ 
+  requireTLS: true,
+  tls: {
+    key: await Bun.file("./key.pem").text(),
+    cert: await Bun.file("./cert.pem").text(),
+  }
+});
+```
+
+The middleware approach allows clients to connect and see capabilities before being required to upgrade.
+</Note>
+
+## Use Cases
+
+- **Privacy**: Ensure email content is encrypted in transit
+- **Compliance**: Meet security requirements for handling sensitive data
+- **Security**: Prevent credential theft and man-in-the-middle attacks
+- **Best Practices**: Follow modern email security standards
+
+## Related
+
+- Learn about [TLS & Security](/guides/tls-security) configuration
+- See [Fumi class API](/api/fumi) for server setup

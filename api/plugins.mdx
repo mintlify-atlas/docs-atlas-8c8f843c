@@ -1,0 +1,405 @@
+---
+title: "Plugins"
+description: "Plugin API for creating and using Fumi SMTP middleware bundles"
+---
+
+Plugins are reusable middleware bundles that encapsulate common SMTP server functionality. They allow you to package and share middleware logic across multiple Fumi applications.
+
+## Plugin Type
+
+A plugin is a function that receives a Fumi instance and registers middleware on it.
+
+```typescript
+type Plugin = (app: Fumi) => void;
+```
+
+Plugins are registered using the `app.use()` method and can register middleware on any SMTP phase.
+
+## Creating Plugins
+
+### Basic Plugin
+
+A simple plugin that registers middleware on one or more SMTP phases:
+
+```typescript
+import type { Plugin } from "fumi";
+
+function myPlugin(): Plugin {
+  return (app) => {
+    app.onConnect(async (ctx, next) => {
+      console.log(`Client connected: ${ctx.session.remoteAddress}`);
+      await next();
+    });
+  };
+}
+
+// Usage
+app.use(myPlugin());
+```
+
+### Plugin with Options
+
+Plugins can accept configuration options using a factory function pattern:
+
+```typescript
+import type { Plugin } from "fumi";
+
+interface LoggerOptions {
+  prefix?: string;
+  verbose?: boolean;
+}
+
+function logger(options: LoggerOptions = {}): Plugin {
+  const { prefix = "[SMTP]", verbose = false } = options;
+  
+  return (app) => {
+    app.onConnect(async (ctx, next) => {
+      console.log(`${prefix} Client connected: ${ctx.session.remoteAddress}`);
+      await next();
+    });
+    
+    if (verbose) {
+      app.onMailFrom(async (ctx, next) => {
+        console.log(`${prefix} MAIL FROM: ${ctx.address.address}`);
+        await next();
+      });
+      
+      app.onRcptTo(async (ctx, next) => {
+        console.log(`${prefix} RCPT TO: ${ctx.address.address}`);
+        await next();
+      });
+    }
+  };
+}
+
+// Usage
+app.use(logger({ prefix: "[MyServer]", verbose: true }));
+```
+
+### Multi-Phase Plugin
+
+Plugins can register middleware on multiple SMTP phases:
+
+```typescript
+import type { Plugin } from "fumi";
+
+function rateLimiter(maxPerMinute: number): Plugin {
+  const connections = new Map<string, number[]>();
+  
+  return (app) => {
+    // Track connections
+    app.onConnect(async (ctx, next) => {
+      const ip = ctx.session.remoteAddress;
+      const now = Date.now();
+      const recent = connections.get(ip)?.filter(t => now - t < 60000) || [];
+      
+      if (recent.length >= maxPerMinute) {
+        ctx.reject("Rate limit exceeded", 421);
+      }
+      
+      recent.push(now);
+      connections.set(ip, recent);
+      await next();
+    });
+    
+    // Cleanup on close
+    app.onClose(async (ctx) => {
+      const ip = ctx.session.remoteAddress;
+      const now = Date.now();
+      const recent = connections.get(ip)?.filter(t => now - t < 60000) || [];
+      
+      if (recent.length === 0) {
+        connections.delete(ip);
+      } else {
+        connections.set(ip, recent);
+      }
+    });
+  };
+}
+
+// Usage
+app.use(rateLimiter(10)); // Max 10 connections per minute per IP
+```
+
+## Using Plugins
+
+### Single Plugin
+
+```typescript
+import { Fumi } from "fumi";
+import { logger } from "fumi/plugins/logger";
+
+const app = new Fumi();
+app.use(logger());
+```
+
+### Multiple Plugins
+
+Chain multiple plugins using method chaining:
+
+```typescript
+import { Fumi } from "fumi";
+import { logger } from "fumi/plugins/logger";
+import { denylist } from "fumi/plugins/denylist";
+import { maxSize } from "fumi/plugins/max-size";
+
+const app = new Fumi({ size: 10_000_000 });
+
+app
+  .use(logger())
+  .use(denylist(["192.168.1.100", "10.0.0.50"]))
+  .use(maxSize(10_000_000));
+```
+
+### Plugin Ordering
+
+Plugins are executed in the order they are registered. Middleware from earlier plugins runs before later ones:
+
+```typescript
+app
+  .use(plugin1()) // Runs first
+  .use(plugin2()) // Runs second
+  .use(plugin3()); // Runs third
+```
+
+## Built-in Plugins
+
+Fumi includes several built-in plugins for common use cases:
+
+### logger
+
+Logs SMTP phase events to stdout.
+
+```typescript
+import { logger } from "fumi/plugins/logger";
+
+app.use(logger());
+```
+
+[View logger source](/plugins/logger)
+
+---
+
+### denylist
+
+Blocks connections from specific IP addresses.
+
+```typescript
+import { denylist } from "fumi/plugins/denylist";
+
+app.use(denylist([
+  "192.168.1.100",
+  "10.0.0.50"
+]));
+```
+
+[View denylist source](/plugins/denylist)
+
+---
+
+### maxSize
+
+Rejects messages that exceed a size limit.
+
+```typescript
+import { maxSize } from "fumi/plugins/max-size";
+
+const app = new Fumi({ size: 10_000_000 });
+app.use(maxSize(10_000_000)); // 10MB
+```
+
+**Note:** You must set `FumiOptions.size` to the same value for size tracking to work.
+
+[View maxSize source](/plugins/max-size)
+
+---
+
+### requireTls
+
+Enforces TLS encryption before allowing certain commands.
+
+```typescript
+import { requireTls } from "fumi/plugins/require-tls";
+
+app.use(requireTls());
+```
+
+[View requireTls source](/plugins/require-tls)
+
+---
+
+### senderBlock
+
+Blocks specific sender addresses or domains.
+
+```typescript
+import { senderBlock } from "fumi/plugins/sender-block";
+
+app.use(senderBlock([
+  "spam@example.com",
+  "@blocked-domain.com"
+]));
+```
+
+[View senderBlock source](/plugins/sender-block)
+
+---
+
+### rcptFilter
+
+Filters recipient addresses based on custom logic.
+
+```typescript
+import { rcptFilter } from "fumi/plugins/rcpt-filter";
+
+app.use(rcptFilter(async (address) => {
+  // Only accept mail for specific domains
+  const allowedDomains = ["example.com", "test.com"];
+  const domain = address.split("@")[1];
+  return allowedDomains.includes(domain);
+}));
+```
+
+[View rcptFilter source](/plugins/rcpt-filter)
+
+## Plugin Patterns
+
+### Async Plugin Initialization
+
+Plugins can perform async setup before registration:
+
+```typescript
+function databaseAuth(dbUrl: string): Plugin {
+  let db: Database;
+  
+  return (app) => {
+    // Initialize database connection
+    (async () => {
+      db = await connectToDatabase(dbUrl);
+    })();
+    
+    app.onAuth(async (ctx, next) => {
+      const user = await db.findUser(ctx.credentials.username);
+      
+      if (user && ctx.credentials.validatePassword(user.passwordHash)) {
+        ctx.accept({ id: user.id });
+      } else {
+        ctx.reject("Invalid credentials", 535);
+      }
+      
+      await next();
+    });
+  };
+}
+```
+
+### Stateful Plugins
+
+Plugins can maintain state across requests:
+
+```typescript
+function sessionStore(): Plugin {
+  const sessions = new Map<string, any>();
+  
+  return (app) => {
+    app.onConnect(async (ctx, next) => {
+      sessions.set(ctx.session.id, {
+        connectedAt: Date.now(),
+        messageCount: 0
+      });
+      await next();
+    });
+    
+    app.onData(async (ctx, next) => {
+      const data = sessions.get(ctx.session.id);
+      if (data) {
+        data.messageCount++;
+      }
+      await next();
+    });
+    
+    app.onClose(async (ctx) => {
+      const data = sessions.get(ctx.session.id);
+      console.log(`Session ${ctx.session.id} sent ${data?.messageCount} messages`);
+      sessions.delete(ctx.session.id);
+    });
+  };
+}
+```
+
+### Composable Plugins
+
+Create higher-order plugins that combine multiple plugins:
+
+```typescript
+function securityBundle(options: {
+  blockedIps?: string[];
+  maxSize?: number;
+  requireAuth?: boolean;
+}): Plugin {
+  return (app) => {
+    if (options.blockedIps) {
+      app.use(denylist(options.blockedIps));
+    }
+    
+    if (options.maxSize) {
+      app.use(maxSize(options.maxSize));
+    }
+    
+    if (options.requireAuth) {
+      app.onAuth(async (ctx, next) => {
+        // Enforce authentication
+        if (!ctx.credentials) {
+          ctx.reject("Authentication required", 535);
+        }
+        await next();
+      });
+    }
+  };
+}
+
+// Usage
+app.use(securityBundle({
+  blockedIps: ["192.168.1.100"],
+  maxSize: 10_000_000,
+  requireAuth: true
+}));
+```
+
+## Best Practices
+
+1. **Use factory functions**: Return a Plugin instead of being one directly, allowing for configuration.
+
+2. **Call `next()`**: Always call `await next()` in middleware unless explicitly rejecting or terminating.
+
+3. **Handle errors**: Use `ctx.reject()` for SMTP errors rather than throwing exceptions.
+
+4. **Clean up resources**: Use `onClose` to clean up any resources allocated during the session.
+
+5. **Document options**: Provide clear TypeScript interfaces for plugin options.
+
+6. **Keep plugins focused**: Each plugin should do one thing well.
+
+7. **Export types**: Export TypeScript types for plugin options to improve developer experience.
+
+```typescript
+import type { Plugin } from "fumi";
+
+export interface MyPluginOptions {
+  enabled?: boolean;
+  maxRetries?: number;
+}
+
+export function myPlugin(options: MyPluginOptions = {}): Plugin {
+  const { enabled = true, maxRetries = 3 } = options;
+  
+  return (app) => {
+    if (!enabled) return;
+    
+    app.onConnect(async (ctx, next) => {
+      // Plugin logic
+      await next();
+    });
+  };
+}
+```

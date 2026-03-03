@@ -1,0 +1,251 @@
+---
+title: Sender Block
+description: Reject mail from specific sender domains
+---
+
+The `senderBlock` plugin provides sender-based filtering by rejecting MAIL FROM commands from specified domains. This is useful for blocking spam, preventing mail from known malicious sources, or enforcing email policies.
+
+## What It Does
+
+The senderBlock plugin:
+- Maintains a list of blocked sender domains
+- Checks each MAIL FROM command against the blocked domains
+- Rejects mail from domains in the block list
+- Performs case-insensitive domain matching
+- Returns a 550 error code for blocked senders
+
+## Function Signature
+
+```typescript
+function senderBlock(domains: string[]): Plugin
+```
+
+### Parameters
+
+<ParamField path="domains" type="string[]" required>
+  Array of domain names to block. Mail from senders with email addresses from these domains will be rejected. Domain matching is case-insensitive.
+</ParamField>
+
+## Usage
+
+Import and configure the senderBlock plugin with your blocked domains:
+
+```typescript
+import { Fumi } from "fumi";
+import { senderBlock } from "fumi/plugins";
+
+const app = new Fumi();
+
+// Block mail from these sender domains
+app.use(senderBlock(["spam.example", "blocked.org"]));
+
+app.listen();
+```
+
+## Spam Prevention Example
+
+```typescript
+import { Fumi } from "fumi";
+import { senderBlock } from "fumi/plugins";
+
+const app = new Fumi();
+
+// Block known spam domains
+const spamDomains = [
+  "spam-source.com",
+  "malicious.net",
+  "phishing-site.org"
+];
+
+app.use(senderBlock(spamDomains));
+
+app.listen();
+```
+
+## Dynamic Block List Example
+
+```typescript
+import { Fumi } from "fumi";
+import { senderBlock } from "fumi/plugins";
+
+const app = new Fumi();
+
+// Load blocked domains from a database or external service
+const blockedDomains = await loadBlockedDomainsFromDatabase();
+
+app.use(senderBlock(blockedDomains));
+
+app.listen();
+```
+
+## Error Response
+
+When mail from a blocked domain is attempted:
+
+```
+550 Mail from spam.example is not accepted
+```
+
+The rejection happens during the MAIL FROM phase, before any recipients are specified or data is transmitted.
+
+## Implementation
+
+The plugin converts domain names to lowercase and stores them in a Set for efficient lookup:
+
+```typescript
+export function senderBlock(domains: string[]): Plugin {
+  const blocked = new Set(domains.map((d) => d.toLowerCase()));
+  return (app) => {
+    app.onMailFrom(async (ctx, next) => {
+      const domain = ctx.address.address.split("@")[1]?.toLowerCase() ?? "";
+      if (blocked.has(domain)) {
+        ctx.reject(`Mail from ${domain} is not accepted`, 550);
+      }
+      await next();
+    });
+  };
+}
+```
+
+## How Domain Extraction Works
+
+The plugin extracts the domain from the sender's email address:
+
+```typescript
+const domain = ctx.address.address.split("@")[1]?.toLowerCase() ?? "";
+```
+
+For example:
+- `sender@spam.example` → `spam.example`
+- `admin@BLOCKED.ORG` → `blocked.org` (case-insensitive)
+- `invalid-email` → `""` (empty string)
+
+<Note>
+**Case-Insensitive Matching**
+
+The plugin performs case-insensitive domain matching. Both the blocked domains and incoming sender domains are converted to lowercase before comparison.
+
+You can specify blocked domains in any case:
+```typescript
+app.use(senderBlock(["SPAM.example", "Blocked.ORG"]));
+```
+
+These will match:
+- `sender@spam.example`
+- `sender@Spam.Example`
+- `sender@SPAM.EXAMPLE`
+</Note>
+
+## SMTP Transaction Flow
+
+The plugin rejects mail early in the SMTP transaction:
+
+```
+C: MAIL FROM:<sender@blocked.org>
+S: 550 Mail from blocked.org is not accepted
+C: QUIT
+S: 221 Bye
+```
+
+This prevents the blocked sender from:
+- Specifying recipients
+- Transmitting message data
+- Wasting server resources
+
+## Use Cases
+
+- **Spam Prevention**: Block known spam sender domains
+- **Phishing Protection**: Block domains used in phishing campaigns
+- **Policy Enforcement**: Prevent mail from unauthorized domains
+- **Abuse Mitigation**: Block domains that have sent abusive content
+- **Compliance**: Enforce organizational email policies
+- **Testing**: Block production domains in test environments
+
+## Combining with IP Denylist
+
+Use both IP and domain blocking for comprehensive protection:
+
+```typescript
+import { Fumi } from "fumi";
+import { denylist, senderBlock } from "fumi/plugins";
+
+const app = new Fumi();
+
+// Block by IP address
+app.use(denylist(["192.168.1.100", "10.0.0.50"]));
+
+// Block by sender domain
+app.use(senderBlock(["spam.example", "malicious.org"]));
+
+app.listen();
+```
+
+## Allowing Specific Senders (Allowlist Pattern)
+
+To create an allowlist (inverse behavior), write a custom plugin:
+
+```typescript
+import { Fumi, type Plugin } from "fumi";
+
+function senderAllow(allowedDomains: string[]): Plugin {
+  const allowed = new Set(allowedDomains.map((d) => d.toLowerCase()));
+  return (app) => {
+    app.onMailFrom(async (ctx, next) => {
+      const domain = ctx.address.address.split("@")[1]?.toLowerCase() ?? "";
+      if (!allowed.has(domain)) {
+        ctx.reject(`Mail from ${domain} is not accepted`, 550);
+      }
+      await next();
+    });
+  };
+}
+
+const app = new Fumi();
+
+// Only accept mail from trusted domains
+app.use(senderAllow(["trusted.com", "partner.org"]));
+
+app.listen();
+```
+
+## Updating the Block List at Runtime
+
+To update the block list dynamically, maintain your own Set:
+
+```typescript
+import { Fumi } from "fumi";
+
+const app = new Fumi();
+
+// Maintain a mutable Set
+const blockedDomains = new Set(["spam.example"]);
+
+// Custom plugin that references the mutable Set
+app.use((app) => {
+  app.onMailFrom(async (ctx, next) => {
+    const domain = ctx.address.address.split("@")[1]?.toLowerCase() ?? "";
+    if (blockedDomains.has(domain)) {
+      ctx.reject(`Mail from ${domain} is not accepted`, 550);
+    }
+    await next();
+  });
+});
+
+// Later, add domains to the block list
+blockedDomains.add("new-spam.com");
+
+// Or remove domains
+blockedDomains.delete("no-longer-spam.com");
+
+app.listen();
+```
+
+## Performance
+
+The plugin uses a `Set` for O(1) domain lookup, making it efficient even with large block lists. The overhead per MAIL FROM command is minimal:
+
+1. Extract domain (one string split operation)
+2. Convert to lowercase
+3. Set lookup (O(1))
+
+Even with thousands of blocked domains, the performance impact is negligible.

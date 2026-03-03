@@ -1,0 +1,115 @@
+---
+title: Installation
+description: Install Fumi SMTP framework and set up your development environment
+---
+
+# Installation
+
+Get started with Fumi by installing it with Bun.
+
+## Prerequisites
+
+Fumi requires Bun 1.0.0 or higher. If you don't have Bun installed, visit [bun.sh](https://bun.sh) for installation instructions.
+
+<Note>
+Fumi is built specifically for Bun and takes advantage of Bun's native performance. It does not support Node.js.
+</Note>
+
+## Install Fumi
+
+Install Fumi using Bun's package manager:
+
+```bash
+bun add @puiusabin/fumi
+```
+
+This will install the latest version of Fumi and its dependency `bun-smtp`.
+
+## Verify Installation
+
+Create a simple test file to verify your installation:
+
+<Steps>
+  <Step title="Create a test file">
+    Create a new file called `test.ts`:
+    
+    ```ts test.ts
+    import { Fumi } from "@puiusabin/fumi";
+    
+    const app = new Fumi({ authOptional: true });
+    
+    app.onConnect(async (ctx, next) => {
+      console.log(`Connection from ${ctx.session.remoteAddress}`);
+      await next();
+    });
+    
+    console.log("Starting Fumi SMTP server on port 2525...");
+    await app.listen(2525);
+    console.log("Server is running!");
+    ```
+  </Step>
+  
+  <Step title="Run the test server">
+    Run your test file with Bun:
+    
+    ```bash
+    bun test.ts
+    ```
+    
+    You should see:
+    ```
+    Starting Fumi SMTP server on port 2525...
+    Server is running!
+    ```
+  </Step>
+  
+  <Step title="Test the connection">
+    In another terminal, test the server with telnet:
+    
+    ```bash
+    telnet localhost 2525
+    ```
+    
+    You should receive a `220` banner response from the SMTP server. Type `QUIT` to close the connection.
+  </Step>
+</Steps>
+
+<Tip>
+If you see "Connection from 127.0.0.1" in your server logs, your installation is working correctly!
+</Tip>
+
+## TypeScript Support
+
+Fumi is written in TypeScript and includes complete type definitions. No additional `@types` packages are needed.
+
+For the best development experience, ensure you have TypeScript 5 or higher:
+
+```bash
+bun add -d typescript
+```
+
+## Project Structure
+
+A typical Fumi project structure looks like this:
+
+```
+my-smtp-server/
+├── src/
+│   ├── index.ts          # Main server entry point
+│   ├── plugins/          # Custom plugins
+│   └── handlers/         # Middleware handlers
+├── package.json
+└── tsconfig.json
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Quick Start" icon="bolt" href="/quickstart">
+    Build your first complete SMTP server
+  </Card>
+  
+  <Card title="Configuration" icon="gear" href="/configuration">
+    Learn about available configuration options
+  </Card>
+</CardGroup>

@@ -1,0 +1,163 @@
+---
+title: Denylist
+description: Block connections from specific IP addresses
+---
+
+The `denylist` plugin provides IP-based access control by blocking connections from a specified list of IP addresses. This is useful for preventing abuse, blocking known spam sources, or enforcing network policies.
+
+## What It Does
+
+The denylist plugin:
+- Maintains a set of blocked IP addresses
+- Checks incoming connections against the denylist
+- Immediately rejects connections from blocked IPs
+- Returns a 550 error code for blocked connections
+
+## Function Signature
+
+```typescript
+function denylist(ips: string[]): Plugin
+```
+
+### Parameters
+
+<ParamField path="ips" type="string[]" required>
+  Array of IP addresses to block. Connections from these IPs will be immediately rejected with a 550 error code.
+</ParamField>
+
+## Usage
+
+Import and configure the denylist plugin with your list of blocked IPs:
+
+```typescript
+import { Fumi } from "fumi";
+import { denylist } from "fumi/plugins";
+
+const app = new Fumi();
+
+// Block specific IP addresses
+app.use(denylist(["1.2.3.4", "5.6.7.8"]));
+
+app.listen();
+```
+
+## Dynamic Denylist Example
+
+You can build the denylist dynamically from external sources:
+
+```typescript
+import { Fumi } from "fumi";
+import { denylist } from "fumi/plugins";
+
+const app = new Fumi();
+
+// Load blocked IPs from a database or file
+const blockedIPs = await loadBlockedIPsFromDatabase();
+
+app.use(denylist(blockedIPs));
+
+app.listen();
+```
+
+## Multiple IP Blocks
+
+```typescript
+import { Fumi } from "fumi";
+import { denylist } from "fumi/plugins";
+
+const app = new Fumi();
+
+// Block known spam sources
+const spamSources = ["192.168.1.100", "192.168.1.101"];
+
+// Block internal test servers in production
+const testServers = ["10.0.0.50", "10.0.0.51"];
+
+app.use(denylist([...spamSources, ...testServers]));
+
+app.listen();
+```
+
+## Error Response
+
+When a blocked IP attempts to connect:
+
+```
+550 Connection refused
+```
+
+The connection is rejected during the `onConnect` phase, before any SMTP commands are processed.
+
+## Implementation
+
+The plugin converts the IP array to a Set for efficient lookup and checks each connection:
+
+```typescript
+export function denylist(ips: string[]): Plugin {
+  const blocked = new Set(ips);
+  return (app) => {
+    app.onConnect(async (ctx, next) => {
+      if (blocked.has(ctx.session.remoteAddress)) {
+        ctx.reject("Connection refused", 550);
+      }
+      await next();
+    });
+  };
+}
+```
+
+## Performance Considerations
+
+The denylist uses a `Set` for O(1) lookup performance, making it efficient even with large IP lists. However, for very large denylists (thousands of IPs), consider:
+
+- Using a database-backed solution
+- Implementing IP range blocking (CIDR notation)
+- Caching the denylist in memory with periodic updates
+- Using firewall rules at the network level
+
+<Note>
+**IP Address Format**
+
+The plugin expects exact IP address matches. IPv4 addresses should be in dotted decimal notation (e.g., "192.168.1.1"). IPv6 addresses should be in standard notation (e.g., "2001:db8::1").
+
+The plugin does not currently support:
+- CIDR notation (e.g., "192.168.1.0/24")
+- Wildcard matching (e.g., "192.168.1.*")
+- Hostname blocking
+</Note>
+
+## Use Cases
+
+- **Abuse Prevention**: Block IPs that have sent spam or malicious content
+- **Rate Limiting Enforcement**: Temporarily block IPs that exceed rate limits
+- **Geographic Restrictions**: Block IPs from specific countries or regions
+- **Security Incidents**: Quickly block IPs involved in attacks
+- **Testing**: Prevent test servers from sending to production
+
+## Updating the Denylist
+
+To update the denylist at runtime, you'll need to implement a custom solution since the plugin is configured at startup:
+
+```typescript
+import { Fumi } from "fumi";
+
+const app = new Fumi();
+
+// Maintain your own Set
+const blockedIPs = new Set(["1.2.3.4"]);
+
+// Custom plugin that references the mutable Set
+app.use((app) => {
+  app.onConnect(async (ctx, next) => {
+    if (blockedIPs.has(ctx.session.remoteAddress)) {
+      ctx.reject("Connection refused", 550);
+    }
+    await next();
+  });
+});
+
+// Later, add IPs to the denylist
+blockedIPs.add("5.6.7.8");
+
+app.listen();
+```

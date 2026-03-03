@@ -1,0 +1,338 @@
+---
+title: "Context Objects"
+description: "Understanding context objects passed to middleware in each SMTP phase"
+---
+
+Every middleware function receives a context object (`ctx`) specific to the SMTP phase. Context objects provide access to session data, phase-specific information, and methods to control the request flow.
+
+## Context Pattern
+
+```typescript
+app.onMailFrom(async (ctx, next) => {
+  // ctx contains phase-specific data and methods
+  console.log(ctx.session.id);
+  console.log(ctx.address.address);
+  
+  // Control flow with ctx.reject()
+  if (isBlocked(ctx.address.address)) {
+    ctx.reject('Sender blocked', 550);
+  }
+  
+  await next();
+});
+```
+
+## Context Types
+
+Each SMTP phase has its own context type with different properties and methods.
+
+### ConnectContext
+
+Provided during the connection phase (`onConnect`).
+
+<ParamField path="session" type="Session" required>
+  The current SMTP session object containing connection details
+</ParamField>
+
+<ParamField path="reject" type="(message?: string, code?: number) => never" required>
+  Reject the connection with an optional message and SMTP response code (default: 550)
+</ParamField>
+
+```typescript
+app.onConnect(async (ctx, next) => {
+  // Access session properties
+  const ip = ctx.session.remoteAddress;
+  const isSecure = ctx.session.secure;
+  
+  // Reject connections from specific IPs
+  if (blockedIps.includes(ip)) {
+    ctx.reject('Connection refused', 550);
+  }
+  
+  await next();
+});
+```
+
+See: `~/workspace/source/src/types.ts:41`
+
+### AuthContext
+
+Provided during authentication (`onAuth`).
+
+<ParamField path="session" type="Session" required>
+  The current SMTP session
+</ParamField>
+
+<ParamField path="credentials" type="Credentials" required>
+  Authentication credentials containing:
+  - `method`: Authentication method (e.g., "PLAIN", "LOGIN")
+  - `username`: Provided username
+  - `password`: Provided password
+  - `validatePassword`: Function to validate password
+</ParamField>
+
+<ParamField path="accept" type="(user: unknown) => void" required>
+  Accept authentication and set the user object on the session
+</ParamField>
+
+<ParamField path="reject" type="(message?: string, code?: number) => never" required>
+  Reject authentication with an optional message and code (default: 535)
+</ParamField>
+
+```typescript
+app.onAuth(async (ctx, next) => {
+  const { username, password, method } = ctx.credentials;
+  
+  console.log(`Auth attempt via ${method}`);
+  
+  // Validate credentials
+  const user = await db.findUser(username);
+  if (user && user.password === password) {
+    // Accept and attach user data to session
+    ctx.accept({ id: user.id, email: user.email });
+  } else {
+    ctx.reject('Invalid credentials', 535);
+  }
+  
+  await next();
+});
+```
+
+<Warning>
+You must call `ctx.accept()` for authentication to succeed. If no middleware calls `accept()`, authentication will fail with code 535.
+</Warning>
+
+See: `~/workspace/source/src/types.ts:46`
+
+### MailFromContext
+
+Provided when processing the `MAIL FROM` command.
+
+<ParamField path="session" type="Session" required>
+  The current SMTP session
+</ParamField>
+
+<ParamField path="address" type="Address" required>
+  The sender address object containing:
+  - `address`: The email address string
+  - `args`: Additional ESMTP parameters
+</ParamField>
+
+<ParamField path="reject" type="(message?: string, code?: number) => never" required>
+  Reject the sender with an optional message and code (default: 550)
+</ParamField>
+
+```typescript
+app.onMailFrom(async (ctx, next) => {
+  const sender = ctx.address.address;
+  const args = ctx.address.args;
+  
+  // Block specific domains
+  if (sender.endsWith('@spam.example')) {
+    ctx.reject('Sender domain blocked', 550);
+  }
+  
+  // Access ESMTP parameters
+  console.log('ESMTP args:', args);
+  
+  await next();
+});
+```
+
+See: `~/workspace/source/src/types.ts:53`
+
+### RcptToContext
+
+Provided for each `RCPT TO` command (called once per recipient).
+
+<ParamField path="session" type="Session" required>
+  The current SMTP session
+</ParamField>
+
+<ParamField path="address" type="Address" required>
+  The recipient address object containing:
+  - `address`: The email address string
+  - `args`: Additional ESMTP parameters
+</ParamField>
+
+<ParamField path="reject" type="(message?: string, code?: number) => never" required>
+  Reject the recipient with an optional message and code (default: 550)
+</ParamField>
+
+```typescript
+app.onRcptTo(async (ctx, next) => {
+  const recipient = ctx.address.address;
+  
+  // Only accept mail for specific domains
+  if (!recipient.endsWith('@mycompany.com')) {
+    ctx.reject('Mailbox unavailable', 550);
+  }
+  
+  // Check recipient quota
+  const quota = await getQuota(recipient);
+  if (quota.exceeded) {
+    ctx.reject('Mailbox full', 552);
+  }
+  
+  await next();
+});
+```
+
+See: `~/workspace/source/src/types.ts:59`
+
+### DataContext
+
+Provided when processing message data after the `DATA` command.
+
+<ParamField path="session" type="Session" required>
+  The current SMTP session
+</ParamField>
+
+<ParamField path="stream" type="ReadableStream<Uint8Array>" required>
+  A readable stream containing the message body. Can be consumed only once.
+</ParamField>
+
+<ParamField path="sizeExceeded" type="boolean" required>
+  Whether the message exceeded the configured size limit
+</ParamField>
+
+<ParamField path="reject" type="(message?: string, code?: number) => never" required>
+  Reject the message with an optional message and code (default: 552)
+</ParamField>
+
+```typescript
+app.onData(async (ctx, next) => {
+  // Check size limit
+  if (ctx.sizeExceeded) {
+    ctx.reject('Message too large', 552);
+  }
+  
+  // Read the message stream
+  const chunks: Uint8Array[] = [];
+  for await (const chunk of ctx.stream) {
+    chunks.push(chunk);
+  }
+  const message = Buffer.concat(chunks).toString();
+  
+  // Parse and process
+  console.log('Message length:', message.length);
+  
+  // Save to database or forward
+  await saveMessage(ctx.session.envelope, message);
+  
+  await next();
+});
+```
+
+<Warning>
+The `stream` can only be consumed once. If multiple middleware need the message content, the first middleware should read it and store it somewhere accessible (e.g., `ctx.session`).
+</Warning>
+
+See: `~/workspace/source/src/types.ts:65`
+
+### CloseContext
+
+Provided when the connection closes (`onClose`).
+
+<ParamField path="session" type="Session" required>
+  The current SMTP session with final state
+</ParamField>
+
+```typescript
+app.onClose(async (ctx) => {
+  // Log session summary
+  console.log(`Session ${ctx.session.id} closed`);
+  console.log(`Envelope:`, ctx.session.envelope);
+  
+  // Cleanup resources
+  await cleanupSession(ctx.session.id);
+});
+```
+
+<Note>
+`CloseContext` has no `reject()` method. The `onClose` phase is fire-and-forget and errors are silently caught.
+</Note>
+
+See: `~/workspace/source/src/types.ts:72`
+
+## Common Methods
+
+### `ctx.reject()`
+
+Available in all contexts except `CloseContext`. Throws an `SMTPError` that stops middleware execution and sends an SMTP error response.
+
+```typescript
+// Reject with default code
+ctx.reject('Access denied'); // Uses phase-specific default code
+
+// Reject with custom code
+ctx.reject('Temporary failure', 421);
+ctx.reject('Invalid recipient', 550);
+ctx.reject('Message too large', 552);
+```
+
+**Default codes by phase:**
+- `onConnect`: 550
+- `onAuth`: 535
+- `onMailFrom`: 550
+- `onRcptTo`: 550
+- `onData`: 552
+
+See: `~/workspace/source/src/fumi.ts:19`
+
+### `ctx.accept()` (AuthContext only)
+
+Accepts authentication and attaches user data to the session.
+
+```typescript
+app.onAuth(async (ctx, next) => {
+  if (isValidUser(ctx.credentials)) {
+    // User data will be available in ctx.session.user in subsequent phases
+    ctx.accept({ 
+      id: 123, 
+      username: ctx.credentials.username,
+      roles: ['user', 'admin']
+    });
+  }
+  await next();
+});
+
+// Later phases can access user data
+app.onMailFrom(async (ctx, next) => {
+  console.log('Authenticated user:', ctx.session.user);
+  await next();
+});
+```
+
+See: `~/workspace/source/src/fumi.ts:145`
+
+## Type Safety
+
+Fumi provides full TypeScript types for all context objects:
+
+```typescript
+import type { 
+  ConnectContext,
+  AuthContext,
+  MailFromContext,
+  RcptToContext,
+  DataContext,
+  CloseContext 
+} from 'fumi';
+
+// Type-safe middleware
+const authHandler: Middleware<AuthContext> = async (ctx, next) => {
+  // ctx is strongly typed as AuthContext
+  ctx.credentials.username; // ✓ Valid
+  ctx.accept({ id: 1 });     // ✓ Valid
+  // ctx.stream;              // ✗ Error: only available in DataContext
+  
+  await next();
+};
+```
+
+## Next Steps
+
+- Learn about [Session Management](/concepts/sessions) and the session object
+- Explore [Error Handling](/concepts/error-handling) with SMTPError
+- See [Middleware](/concepts/middleware) for composition patterns

@@ -1,0 +1,621 @@
+---
+title: "Types"
+description: "TypeScript types and interfaces for Fumi SMTP framework"
+---
+
+Complete reference for all TypeScript types, interfaces, and classes exported by Fumi.
+
+## SMTPError
+
+Custom error class for SMTP protocol errors. Extends the standard JavaScript `Error` class with an SMTP response code.
+
+```typescript
+class SMTPError extends Error {
+  responseCode: number;
+  constructor(message: string, responseCode?: number);
+}
+```
+
+<ResponseField name="message" type="string" required>
+  Human-readable error message.
+</ResponseField>
+
+<ResponseField name="responseCode" type="number" default="550">
+  SMTP response code (e.g., 550, 535, 552). Defaults to 550 if not specified.
+</ResponseField>
+
+### Example
+
+```typescript
+import { SMTPError } from "fumi";
+
+// Throw with default code (550)
+throw new SMTPError("Mailbox unavailable");
+
+// Throw with custom code
+throw new SMTPError("Authentication failed", 535);
+throw new SMTPError("Message too large", 552);
+```
+
+## Core Interfaces
+
+### Address
+
+Represents an email address with optional SMTP parameters.
+
+```typescript
+interface Address {
+  address: string;
+  args: Record<string, unknown>;
+}
+```
+
+<ResponseField name="address" type="string" required>
+  The email address (e.g., "user@example.com").
+</ResponseField>
+
+<ResponseField name="args" type="Record<string, unknown>" required>
+  SMTP parameters passed with the address (e.g., SIZE, BODY).
+</ResponseField>
+
+---
+
+### Envelope
+
+Contains the sender and recipient information for an email transaction.
+
+```typescript
+interface Envelope {
+  mailFrom: Address;
+  rcptTo: Address[];
+}
+```
+
+<ResponseField name="mailFrom" type="Address" required>
+  The sender address from the MAIL FROM command.
+</ResponseField>
+
+<ResponseField name="rcptTo" type="Address[]" required>
+  Array of recipient addresses from RCPT TO commands.
+</ResponseField>
+
+---
+
+### Session
+
+Represents an active SMTP session with connection and transaction metadata.
+
+```typescript
+interface Session {
+  id: string;
+  secure: boolean;
+  remoteAddress: string;
+  clientHostname: string;
+  openingCommand: string;
+  user: unknown;
+  envelope: Envelope;
+  transmissionType: string;
+}
+```
+
+<ResponseField name="id" type="string" required>
+  Unique identifier for this SMTP session.
+</ResponseField>
+
+<ResponseField name="secure" type="boolean" required>
+  Whether the connection is using TLS/SSL.
+</ResponseField>
+
+<ResponseField name="remoteAddress" type="string" required>
+  IP address of the connected client.
+</ResponseField>
+
+<ResponseField name="clientHostname" type="string" required>
+  Hostname provided by the client in EHLO/HELO command.
+</ResponseField>
+
+<ResponseField name="openingCommand" type="string" required>
+  The command used to initiate the session ("EHLO" or "HELO").
+</ResponseField>
+
+<ResponseField name="user" type="unknown" required>
+  User data set during authentication via `ctx.accept(user)`.
+</ResponseField>
+
+<ResponseField name="envelope" type="Envelope" required>
+  The email envelope containing sender and recipients.
+</ResponseField>
+
+<ResponseField name="transmissionType" type="string" required>
+  Type of transmission (e.g., "ESMTP", "SMTP").
+</ResponseField>
+
+---
+
+### Credentials
+
+Authentication credentials provided by the client.
+
+```typescript
+interface Credentials {
+  method: string;
+  username: string;
+  password: string;
+  validatePassword: (password: string) => boolean;
+}
+```
+
+<ResponseField name="method" type="string" required>
+  Authentication method used (e.g., "PLAIN", "LOGIN").
+</ResponseField>
+
+<ResponseField name="username" type="string" required>
+  Username provided by the client.
+</ResponseField>
+
+<ResponseField name="password" type="string" required>
+  Password provided by the client (plain text after decoding).
+</ResponseField>
+
+<ResponseField name="validatePassword" type="(password: string) => boolean" required>
+  Helper function to validate a password hash. Returns `true` if the password matches.
+</ResponseField>
+
+## Context Types
+
+Context objects are passed to middleware functions for each SMTP phase.
+
+### ConnectContext
+
+Context for the connection phase.
+
+```typescript
+interface ConnectContext {
+  session: Session;
+  reject(message?: string, code?: number): never;
+}
+```
+
+<ResponseField name="session" type="Session" required>
+  The current SMTP session.
+</ResponseField>
+
+<ResponseField name="reject" type="(message?: string, code?: number) => never" required>
+  Rejects the connection and closes it. Default code is 550.
+</ResponseField>
+
+#### Example
+
+```typescript
+app.onConnect(async (ctx, next) => {
+  if (ctx.session.remoteAddress === "192.168.1.100") {
+    ctx.reject("Access denied", 550);
+  }
+  await next();
+});
+```
+
+---
+
+### AuthContext
+
+Context for the authentication phase.
+
+```typescript
+interface AuthContext {
+  session: Session;
+  credentials: Credentials;
+  accept(user: unknown): void;
+  reject(message?: string, code?: number): never;
+}
+```
+
+<ResponseField name="session" type="Session" required>
+  The current SMTP session.
+</ResponseField>
+
+<ResponseField name="credentials" type="Credentials" required>
+  Authentication credentials from the client.
+</ResponseField>
+
+<ResponseField name="accept" type="(user: unknown) => void" required>
+  Accepts the authentication and stores user data in `session.user`.
+</ResponseField>
+
+<ResponseField name="reject" type="(message?: string, code?: number) => never" required>
+  Rejects the authentication. Default code is 535.
+</ResponseField>
+
+#### Example
+
+```typescript
+app.onAuth(async (ctx, next) => {
+  const user = await db.findUser(ctx.credentials.username);
+  
+  if (user && ctx.credentials.validatePassword(user.passwordHash)) {
+    ctx.accept({ id: user.id, email: user.email });
+  } else {
+    ctx.reject("Invalid username or password", 535);
+  }
+  
+  await next();
+});
+```
+
+---
+
+### MailFromContext
+
+Context for the MAIL FROM phase.
+
+```typescript
+interface MailFromContext {
+  session: Session;
+  address: Address;
+  reject(message?: string, code?: number): never;
+}
+```
+
+<ResponseField name="session" type="Session" required>
+  The current SMTP session.
+</ResponseField>
+
+<ResponseField name="address" type="Address" required>
+  The sender address from the MAIL FROM command.
+</ResponseField>
+
+<ResponseField name="reject" type="(message?: string, code?: number) => never" required>
+  Rejects the sender address. Default code is 550.
+</ResponseField>
+
+#### Example
+
+```typescript
+app.onMailFrom(async (ctx, next) => {
+  const blockedDomains = ["spam.com", "abuse.net"];
+  const domain = ctx.address.address.split("@")[1];
+  
+  if (blockedDomains.includes(domain)) {
+    ctx.reject("Sender domain blocked", 550);
+  }
+  
+  await next();
+});
+```
+
+---
+
+### RcptToContext
+
+Context for the RCPT TO phase. Called once for each recipient.
+
+```typescript
+interface RcptToContext {
+  session: Session;
+  address: Address;
+  reject(message?: string, code?: number): never;
+}
+```
+
+<ResponseField name="session" type="Session" required>
+  The current SMTP session.
+</ResponseField>
+
+<ResponseField name="address" type="Address" required>
+  The recipient address from the RCPT TO command.
+</ResponseField>
+
+<ResponseField name="reject" type="(message?: string, code?: number) => never" required>
+  Rejects this specific recipient. Default code is 550.
+</ResponseField>
+
+#### Example
+
+```typescript
+app.onRcptTo(async (ctx, next) => {
+  const recipient = ctx.address.address;
+  const exists = await db.mailboxExists(recipient);
+  
+  if (!exists) {
+    ctx.reject("Mailbox not found", 550);
+  }
+  
+  await next();
+});
+```
+
+---
+
+### DataContext
+
+Context for the DATA phase.
+
+```typescript
+interface DataContext {
+  session: Session;
+  stream: ReadableStream<Uint8Array>;
+  sizeExceeded: boolean;
+  reject(message?: string, code?: number): never;
+}
+```
+
+<ResponseField name="session" type="Session" required>
+  The current SMTP session.
+</ResponseField>
+
+<ResponseField name="stream" type="ReadableStream<Uint8Array>" required>
+  Readable stream of the message data. Must be consumed by piping to a writable stream.
+</ResponseField>
+
+<ResponseField name="sizeExceeded" type="boolean" required>
+  Whether the message exceeded the size limit set in `FumiOptions.size`.
+</ResponseField>
+
+<ResponseField name="reject" type="(message?: string, code?: number) => never" required>
+  Rejects the message data. Default code is 552.
+</ResponseField>
+
+#### Example
+
+```typescript
+app.onData(async (ctx, next) => {
+  await next();
+  
+  // Save to file
+  const file = Bun.file(`./messages/${ctx.session.id}.eml`);
+  await ctx.stream.pipeTo(file.writer());
+  
+  if (ctx.sizeExceeded) {
+    ctx.reject("Message exceeds maximum size", 552);
+  }
+});
+```
+
+---
+
+### CloseContext
+
+Context for the close phase.
+
+```typescript
+interface CloseContext {
+  session: Session;
+}
+```
+
+<ResponseField name="session" type="Session" required>
+  The SMTP session that is closing.
+</ResponseField>
+
+#### Example
+
+```typescript
+app.onClose(async (ctx) => {
+  console.log(`Connection closed: ${ctx.session.id}`);
+  await cleanupSession(ctx.session.id);
+});
+```
+
+## Function Types
+
+### Middleware
+
+Middleware function type for SMTP phase handlers.
+
+```typescript
+type Middleware<T> = (
+  ctx: T,
+  next: () => Promise<void>
+) => Promise<void>;
+```
+
+<ResponseField name="ctx" type="T" required>
+  Context object for the current phase (ConnectContext, AuthContext, etc.).
+</ResponseField>
+
+<ResponseField name="next" type="() => Promise<void>" required>
+  Function to call the next middleware in the chain. Must be awaited.
+</ResponseField>
+
+**Returns:** A Promise that resolves when the middleware completes.
+
+#### Example
+
+```typescript
+const myMiddleware: Middleware<ConnectContext> = async (ctx, next) => {
+  console.log("Before next middleware");
+  await next();
+  console.log("After next middleware");
+};
+
+app.onConnect(myMiddleware);
+```
+
+---
+
+### Plugin
+
+Plugin function type for registering reusable middleware bundles.
+
+```typescript
+type Plugin = (app: Fumi) => void;
+```
+
+<ResponseField name="app" type="Fumi" required>
+  The Fumi instance to register middleware on.
+</ResponseField>
+
+#### Example
+
+```typescript
+import type { Plugin } from "fumi";
+
+function myPlugin(options: { prefix: string }): Plugin {
+  return (app) => {
+    app.onConnect(async (ctx, next) => {
+      console.log(`${options.prefix}: Client connected`);
+      await next();
+    });
+  };
+}
+
+// Usage
+app.use(myPlugin({ prefix: "[SMTP]" }));
+```
+
+## Configuration
+
+### FumiOptions
+
+Configuration options for the Fumi SMTP server.
+
+```typescript
+interface FumiOptions {
+  // TLS
+  secure?: boolean;
+  key?: string | Buffer;
+  cert?: string | Buffer;
+  ca?: string | Buffer;
+  requireTLS?: boolean;
+
+  // Auth
+  authMethods?: string[];
+  authOptional?: boolean;
+
+  // Limits
+  size?: number;
+  maxClients?: number;
+
+  // Behavior
+  banner?: string;
+  disabledCommands?: string[];
+  hideSTARTTLS?: boolean;
+  hidePIPELINING?: boolean;
+  hideENHANCEDSTATUSCODES?: boolean;
+  hideDSN?: boolean;
+  hideREQUIRETLS?: boolean;
+  lmtp?: boolean;
+  useXClient?: boolean;
+  useXForward?: boolean;
+  allowInsecureAuth?: boolean;
+  closeTimeout?: number;
+}
+```
+
+<Expandable title="TLS Options">
+  <ResponseField name="secure" type="boolean" default="false">
+    Start server in TLS mode (implicit TLS on port 465).
+  </ResponseField>
+
+  <ResponseField name="key" type="string | Buffer">
+    TLS private key (PEM format).
+  </ResponseField>
+
+  <ResponseField name="cert" type="string | Buffer">
+    TLS certificate (PEM format).
+  </ResponseField>
+
+  <ResponseField name="ca" type="string | Buffer">
+    TLS certificate authority (PEM format).
+  </ResponseField>
+
+  <ResponseField name="requireTLS" type="boolean" default="false">
+    Require clients to use STARTTLS before authentication.
+  </ResponseField>
+</Expandable>
+
+<Expandable title="Authentication Options">
+  <ResponseField name="authMethods" type="string[]">
+    Allowed authentication methods (e.g., ["PLAIN", "LOGIN", "CRAM-MD5"]).
+  </ResponseField>
+
+  <ResponseField name="authOptional" type="boolean" default="false">
+    Allow unauthenticated clients to send mail.
+  </ResponseField>
+
+  <ResponseField name="allowInsecureAuth" type="boolean" default="false">
+    Allow authentication over non-TLS connections.
+  </ResponseField>
+</Expandable>
+
+<Expandable title="Limit Options">
+  <ResponseField name="size" type="number">
+    Maximum message size in bytes. Required for size validation.
+  </ResponseField>
+
+  <ResponseField name="maxClients" type="number">
+    Maximum number of concurrent client connections.
+  </ResponseField>
+</Expandable>
+
+<Expandable title="Behavior Options">
+  <ResponseField name="banner" type="string">
+    Custom SMTP banner message shown to clients.
+  </ResponseField>
+
+  <ResponseField name="disabledCommands" type="string[]">
+    List of SMTP commands to disable (e.g., ["AUTH", "STARTTLS"]).
+  </ResponseField>
+
+  <ResponseField name="hideSTARTTLS" type="boolean" default="false">
+    Hide STARTTLS from capability list.
+  </ResponseField>
+
+  <ResponseField name="hidePIPELINING" type="boolean" default="false">
+    Hide PIPELINING from capability list.
+  </ResponseField>
+
+  <ResponseField name="hideENHANCEDSTATUSCODES" type="boolean" default="false">
+    Hide ENHANCEDSTATUSCODES from capability list.
+  </ResponseField>
+
+  <ResponseField name="hideDSN" type="boolean" default="false">
+    Hide DSN (Delivery Status Notification) from capability list.
+  </ResponseField>
+
+  <ResponseField name="hideREQUIRETLS" type="boolean" default="false">
+    Hide REQUIRETLS from capability list.
+  </ResponseField>
+
+  <ResponseField name="lmtp" type="boolean" default="false">
+    Use LMTP (Local Mail Transfer Protocol) instead of SMTP.
+  </ResponseField>
+
+  <ResponseField name="useXClient" type="boolean" default="false">
+    Enable XCLIENT command for proxy protocol.
+  </ResponseField>
+
+  <ResponseField name="useXForward" type="boolean" default="false">
+    Enable XFORWARD command for proxy protocol.
+  </ResponseField>
+
+  <ResponseField name="closeTimeout" type="number">
+    Timeout in milliseconds for closing idle connections.
+  </ResponseField>
+</Expandable>
+
+### Example
+
+```typescript
+import { Fumi } from "fumi";
+
+const app = new Fumi({
+  // TLS configuration
+  secure: false,
+  requireTLS: true,
+  key: await Bun.file("./server-key.pem").text(),
+  cert: await Bun.file("./server-cert.pem").text(),
+  
+  // Authentication
+  authMethods: ["PLAIN", "LOGIN"],
+  authOptional: false,
+  
+  // Limits
+  size: 25 * 1024 * 1024, // 25MB
+  maxClients: 100,
+  
+  // Customization
+  banner: "Welcome to MyMail SMTP Server",
+  closeTimeout: 30000,
+});
+```

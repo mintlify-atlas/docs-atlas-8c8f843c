@@ -1,0 +1,192 @@
+---
+title: Recipient Filter
+description: Accept recipients only from allowed domains
+---
+
+The `rcptFilter` plugin enforces domain-based recipient restrictions by only accepting RCPT TO commands for recipients whose domain is in an allowed list. This is useful for creating closed mail systems or relay servers that only serve specific domains.
+
+## What It Does
+
+The rcptFilter plugin:
+- Maintains a list of allowed recipient domains
+- Checks each RCPT TO command against the allowed domains
+- Rejects recipients from domains not in the allowed list
+- Performs case-insensitive domain matching
+- Returns a 550 error code for rejected recipients
+
+## Function Signature
+
+```typescript
+function rcptFilter(allowedDomains: string[]): Plugin
+```
+
+### Parameters
+
+<ParamField path="allowedDomains" type="string[]" required>
+  Array of domain names that are allowed to receive mail. Only recipients with email addresses from these domains will be accepted. Domain matching is case-insensitive.
+</ParamField>
+
+## Usage
+
+Import and configure the rcptFilter plugin with your allowed domains:
+
+```typescript
+import { Fumi } from "fumi";
+import { rcptFilter } from "fumi/plugins";
+
+const app = new Fumi();
+
+// Only accept recipients from these domains
+app.use(rcptFilter(["mycompany.com", "subsidiary.com"]));
+
+app.listen();
+```
+
+## Single Domain Example
+
+```typescript
+import { Fumi } from "fumi";
+import { rcptFilter } from "fumi/plugins";
+
+const app = new Fumi();
+
+// Only accept recipients from example.com
+app.use(rcptFilter(["example.com"]));
+
+app.onData(async (ctx) => {
+  console.log("Received email for", ctx.recipients);
+  // All recipients are guaranteed to be @example.com
+});
+
+app.listen();
+```
+
+## Corporate Email System Example
+
+```typescript
+import { Fumi } from "fumi";
+import { rcptFilter } from "fumi/plugins";
+
+const app = new Fumi();
+
+// Accept mail for corporate domains
+const corporateDomains = [
+  "acmecorp.com",
+  "acme-europe.com",
+  "acme-asia.com",
+  "acme-labs.com"
+];
+
+app.use(rcptFilter(corporateDomains));
+
+app.listen();
+```
+
+## Error Response
+
+When a recipient from an unauthorized domain is specified:
+
+```
+550 Recipient domain unauthorized.com not accepted
+```
+
+Each recipient is checked individually, so a message can have some recipients accepted and others rejected.
+
+## Implementation
+
+The plugin converts domain names to lowercase and stores them in a Set for efficient lookup:
+
+```typescript
+export function rcptFilter(allowedDomains: string[]): Plugin {
+  const allowed = new Set(allowedDomains.map((d) => d.toLowerCase()));
+  return (app) => {
+    app.onRcptTo(async (ctx, next) => {
+      const domain = ctx.address.address.split("@")[1]?.toLowerCase() ?? "";
+      if (!allowed.has(domain)) {
+        ctx.reject(`Recipient domain ${domain} not accepted`, 550);
+      }
+      await next();
+    });
+  };
+}
+```
+
+## How Domain Extraction Works
+
+The plugin extracts the domain from the email address using:
+
+```typescript
+const domain = ctx.address.address.split("@")[1]?.toLowerCase() ?? "";
+```
+
+For example:
+- `user@example.com` → `example.com`
+- `admin@MYCOMPANY.COM` → `mycompany.com` (case-insensitive)
+- `invalid-email` → `""` (empty string, will be rejected)
+
+<Note>
+**Case-Insensitive Matching**
+
+The plugin performs case-insensitive domain matching. Both the allowed domains and incoming recipient domains are converted to lowercase before comparison.
+
+You can specify allowed domains in any case:
+```typescript
+app.use(rcptFilter(["Example.COM", "ACME.org"]));
+```
+
+These will match:
+- `user@example.com`
+- `user@Example.Com`
+- `user@EXAMPLE.COM`
+</Note>
+
+## Multiple Recipients
+
+The plugin checks each recipient individually during the SMTP transaction:
+
+```
+C: RCPT TO:<allowed@mycompany.com>
+S: 250 OK
+C: RCPT TO:<blocked@other.com>
+S: 550 Recipient domain other.com not accepted
+C: RCPT TO:<also-allowed@subsidiary.com>
+S: 250 OK
+```
+
+## Use Cases
+
+- **Corporate Mail Servers**: Only accept mail for company domains
+- **Multi-Tenant Systems**: Restrict each tenant to their own domains
+- **Relay Servers**: Only relay mail for authorized domains
+- **Testing Environments**: Prevent accidentally sending to external addresses
+- **Closed Mail Systems**: Create isolated email networks
+
+## Combining with Other Filters
+
+You can combine rcptFilter with other plugins for comprehensive filtering:
+
+```typescript
+import { Fumi } from "fumi";
+import { rcptFilter, senderBlock, requireTls } from "fumi/plugins";
+
+const app = new Fumi();
+
+// Require TLS
+app.use(requireTls());
+
+// Block spam sender domains
+app.use(senderBlock(["spam.example", "malicious.org"]));
+
+// Only accept recipients from trusted domains
+app.use(rcptFilter(["mycompany.com"]));
+
+app.listen();
+```
+
+## Performance
+
+The plugin uses a `Set` for O(1) domain lookup, making it efficient even with many allowed domains. The overhead per RCPT TO command is minimal:
+
+1. Extract domain (one string split operation)
+2. Convert to lowercase
+3. Set lookup (O(1))

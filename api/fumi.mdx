@@ -1,0 +1,355 @@
+---
+title: "Fumi Class"
+description: "Main SMTP server class for Fumi framework"
+---
+
+The `Fumi` class is the core of the Fumi SMTP framework. It provides methods to configure middleware, register plugins, and manage the SMTP server lifecycle.
+
+## Constructor
+
+Creates a new Fumi SMTP server instance.
+
+```typescript
+import { Fumi } from "fumi";
+
+const app = new Fumi(options);
+```
+
+<ParamField path="options" type="FumiOptions" optional>
+  Configuration options for the SMTP server. See [FumiOptions](/api/types#fumioptions) for all available options.
+</ParamField>
+
+### Example
+
+```typescript
+const app = new Fumi({
+  secure: true,
+  key: await Bun.file("./key.pem").text(),
+  cert: await Bun.file("./cert.pem").text(),
+  banner: "My SMTP Server",
+  size: 10 * 1024 * 1024, // 10MB
+  authMethods: ["PLAIN", "LOGIN"],
+});
+```
+
+## Methods
+
+### use()
+
+Registers a plugin with the SMTP server.
+
+```typescript
+app.use(plugin: Plugin): Fumi
+```
+
+<ParamField path="plugin" type="Plugin" required>
+  A plugin function that receives the Fumi instance and registers middleware.
+</ParamField>
+
+**Returns:** The Fumi instance for method chaining.
+
+#### Example
+
+```typescript
+import { logger } from "fumi/plugins/logger";
+import { denylist } from "fumi/plugins/denylist";
+
+app
+  .use(logger())
+  .use(denylist(["192.168.1.100"]));
+```
+
+---
+
+### onConnect()
+
+Registers middleware for the connection phase. Called when a client connects to the server.
+
+```typescript
+app.onConnect(fn: Middleware<ConnectContext>): Fumi
+```
+
+<ParamField path="fn" type="Middleware<ConnectContext>" required>
+  Middleware function to execute on client connection. See [ConnectContext](/api/types#connectcontext).
+</ParamField>
+
+**Returns:** The Fumi instance for method chaining.
+
+#### Example
+
+```typescript
+app.onConnect(async (ctx, next) => {
+  console.log(`Client connected: ${ctx.session.remoteAddress}`);
+  
+  // Block specific IP
+  if (ctx.session.remoteAddress === "192.168.1.100") {
+    ctx.reject("Access denied", 550);
+  }
+  
+  await next();
+});
+```
+
+---
+
+### onAuth()
+
+Registers middleware for the authentication phase. Called when a client attempts to authenticate.
+
+```typescript
+app.onAuth(fn: Middleware<AuthContext>): Fumi
+```
+
+<ParamField path="fn" type="Middleware<AuthContext>" required>
+  Middleware function to execute on authentication. See [AuthContext](/api/types#authcontext).
+</ParamField>
+
+**Returns:** The Fumi instance for method chaining.
+
+#### Example
+
+```typescript
+app.onAuth(async (ctx, next) => {
+  const { username, password, validatePassword } = ctx.credentials;
+  
+  // Check against database
+  const user = await db.findUser(username);
+  
+  if (user && validatePassword(user.password)) {
+    ctx.accept({ id: user.id, username: user.username });
+  } else {
+    ctx.reject("Invalid credentials", 535);
+  }
+  
+  await next();
+});
+```
+
+---
+
+### onMailFrom()
+
+Registers middleware for the MAIL FROM phase. Called when a client specifies the sender address.
+
+```typescript
+app.onMailFrom(fn: Middleware<MailFromContext>): Fumi
+```
+
+<ParamField path="fn" type="Middleware<MailFromContext>" required>
+  Middleware function to execute on MAIL FROM command. See [MailFromContext](/api/types#mailfromcontext).
+</ParamField>
+
+**Returns:** The Fumi instance for method chaining.
+
+#### Example
+
+```typescript
+app.onMailFrom(async (ctx, next) => {
+  const sender = ctx.address.address;
+  
+  // Block specific senders
+  if (sender.endsWith("@spam.com")) {
+    ctx.reject("Sender domain not allowed", 550);
+  }
+  
+  // Validate sender format
+  if (!sender.includes("@")) {
+    ctx.reject("Invalid sender address", 550);
+  }
+  
+  await next();
+});
+```
+
+---
+
+### onRcptTo()
+
+Registers middleware for the RCPT TO phase. Called for each recipient address.
+
+```typescript
+app.onRcptTo(fn: Middleware<RcptToContext>): Fumi
+```
+
+<ParamField path="fn" type="Middleware<RcptToContext>" required>
+  Middleware function to execute on RCPT TO command. See [RcptToContext](/api/types#rcpttocontext).
+</ParamField>
+
+**Returns:** The Fumi instance for method chaining.
+
+#### Example
+
+```typescript
+app.onRcptTo(async (ctx, next) => {
+  const recipient = ctx.address.address;
+  
+  // Only accept mail for specific domains
+  const allowedDomains = ["example.com", "test.com"];
+  const domain = recipient.split("@")[1];
+  
+  if (!allowedDomains.includes(domain)) {
+    ctx.reject("Relay access denied", 550);
+  }
+  
+  await next();
+});
+```
+
+---
+
+### onData()
+
+Registers middleware for the DATA phase. Called when the client sends the message body.
+
+```typescript
+app.onData(fn: Middleware<DataContext>): Fumi
+```
+
+<ParamField path="fn" type="Middleware<DataContext>" required>
+  Middleware function to execute on DATA command. See [DataContext](/api/types#datacontext).
+</ParamField>
+
+**Returns:** The Fumi instance for method chaining.
+
+#### Example
+
+```typescript
+app.onData(async (ctx, next) => {
+  await next();
+  
+  // Stream the message data to a file
+  const file = Bun.file(`./messages/${ctx.session.id}.eml`);
+  await ctx.stream.pipeTo(Bun.file(file).writer());
+  
+  // Check if size limit exceeded
+  if (ctx.sizeExceeded) {
+    ctx.reject("Message too large", 552);
+  }
+  
+  console.log(`Message saved for session ${ctx.session.id}`);
+});
+```
+
+---
+
+### onClose()
+
+Registers middleware for the close phase. Called when a client disconnects.
+
+```typescript
+app.onClose(fn: Middleware<CloseContext>): Fumi
+```
+
+<ParamField path="fn" type="Middleware<CloseContext>" required>
+  Middleware function to execute on connection close. See [CloseContext](/api/types#closecontext).
+</ParamField>
+
+**Returns:** The Fumi instance for method chaining.
+
+**Note:** The onClose handler is fire-and-forget; errors are silently swallowed.
+
+#### Example
+
+```typescript
+app.onClose(async (ctx) => {
+  console.log(`Connection closed: ${ctx.session.remoteAddress}`);
+  
+  // Cleanup session data
+  await cleanupSession(ctx.session.id);
+});
+```
+
+---
+
+### listen()
+
+Starts the SMTP server on the specified port and host.
+
+```typescript
+app.listen(port: number, host?: string): Promise<void>
+```
+
+<ParamField path="port" type="number" required>
+  The port number to listen on (e.g., 25, 587, 2525).
+</ParamField>
+
+<ParamField path="host" type="string" optional>
+  The host address to bind to. Defaults to listening on all interfaces if not specified.
+</ParamField>
+
+**Returns:** A Promise that resolves when the server starts listening.
+
+#### Example
+
+```typescript
+// Listen on all interfaces
+await app.listen(2525);
+console.log("SMTP server listening on port 2525");
+
+// Listen on specific host
+await app.listen(587, "127.0.0.1");
+console.log("SMTP server listening on 127.0.0.1:587");
+```
+
+---
+
+### close()
+
+Stops the SMTP server and closes all connections.
+
+```typescript
+app.close(): Promise<void>
+```
+
+**Returns:** A Promise that resolves when the server has closed.
+
+#### Example
+
+```typescript
+// Graceful shutdown
+process.on("SIGTERM", async () => {
+  console.log("Shutting down SMTP server...");
+  await app.close();
+  console.log("Server closed");
+  process.exit(0);
+});
+```
+
+## Complete Example
+
+```typescript
+import { Fumi } from "fumi";
+import { logger } from "fumi/plugins/logger";
+import { denylist } from "fumi/plugins/denylist";
+
+const app = new Fumi({
+  banner: "My SMTP Server",
+  size: 10 * 1024 * 1024,
+  authMethods: ["PLAIN", "LOGIN"],
+});
+
+app
+  .use(logger())
+  .use(denylist(["192.168.1.100"]))
+  .onConnect(async (ctx, next) => {
+    console.log(`Connected: ${ctx.session.remoteAddress}`);
+    await next();
+  })
+  .onAuth(async (ctx, next) => {
+    const { username, password, validatePassword } = ctx.credentials;
+    if (username === "admin" && validatePassword("secret")) {
+      ctx.accept({ username });
+    } else {
+      ctx.reject("Invalid credentials", 535);
+    }
+    await next();
+  })
+  .onData(async (ctx, next) => {
+    await next();
+    const file = Bun.file(`./mail/${ctx.session.id}.eml`);
+    await ctx.stream.pipeTo(file.writer());
+  });
+
+await app.listen(2525);
+console.log("SMTP server running on port 2525");
+```

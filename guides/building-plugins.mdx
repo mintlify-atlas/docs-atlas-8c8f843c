@@ -1,0 +1,595 @@
+---
+title: Building Plugins
+description: Learn how to create reusable plugins for Fumi SMTP framework
+---
+
+Plugins in Fumi are simple functions that register middleware. The plugin pattern `(app: Fumi) => void` makes it easy to package and share reusable SMTP functionality.
+
+## Plugin Basics
+
+A plugin is a function that receives a Fumi instance and registers middleware:
+
+```ts
+import type { Plugin } from "@puiusabin/fumi";
+
+export function myPlugin(): Plugin {
+  return (app) => {
+    app.onConnect(async (ctx, next) => {
+      // Your logic here
+      await next();
+    });
+  };
+}
+```
+
+Use the plugin with `app.use()`:
+
+```ts
+import { Fumi } from "@puiusabin/fumi";
+import { myPlugin } from "./plugins/my-plugin";
+
+const app = new Fumi();
+app.use(myPlugin());
+
+await app.listen(25);
+```
+
+## Plugin Type
+
+The `Plugin` type is defined as:
+
+```ts
+export type Plugin = (app: Fumi) => void;
+```
+
+Plugins are synchronous functions that register middleware. They don't return a value.
+
+## Built-in Plugin Examples
+
+Fumi includes several plugins that demonstrate best practices:
+
+### Logger Plugin
+
+Logs SMTP events to stdout:
+
+```ts
+import type { Plugin } from "@puiusabin/fumi";
+
+export function logger(): Plugin {
+  return (app) => {
+    app.onConnect(async (ctx, next) => {
+      console.log(`[connect] ${ctx.session.remoteAddress}`);
+      await next();
+    });
+
+    app.onMailFrom(async (ctx, next) => {
+      console.log(`[mail from] ${ctx.address.address}`);
+      await next();
+    });
+
+    app.onRcptTo(async (ctx, next) => {
+      console.log(`[rcpt to] ${ctx.address.address}`);
+      await next();
+    });
+
+    app.onClose(async (ctx) => {
+      console.log(`[close] ${ctx.session.remoteAddress}`);
+    });
+  };
+}
+```
+
+Usage:
+
+```ts
+import { logger } from "@puiusabin/fumi/plugins";
+
+app.use(logger());
+```
+
+### Denylist Plugin
+
+Blocks connections from specific IP addresses:
+
+```ts
+import type { Plugin } from "@puiusabin/fumi";
+
+export function denylist(ips: string[]): Plugin {
+  const blocked = new Set(ips);
+  
+  return (app) => {
+    app.onConnect(async (ctx, next) => {
+      if (blocked.has(ctx.session.remoteAddress)) {
+        ctx.reject("Connection refused", 550);
+      }
+      await next();
+    });
+  };
+}
+```
+
+Usage:
+
+```ts
+import { denylist } from "@puiusabin/fumi/plugins";
+
+app.use(denylist(["192.168.1.100", "10.0.0.50"]));
+```
+
+### Sender Block Plugin
+
+Rejects mail from specific sender domains:
+
+```ts
+import type { Plugin } from "@puiusabin/fumi";
+
+export function senderBlock(domains: string[]): Plugin {
+  const blocked = new Set(domains.map((d) => d.toLowerCase()));
+  
+  return (app) => {
+    app.onMailFrom(async (ctx, next) => {
+      const domain = ctx.address.address.split("@")[1]?.toLowerCase() ?? "";
+      if (blocked.has(domain)) {
+        ctx.reject(`Mail from ${domain} is not accepted`, 550);
+      }
+      await next();
+    });
+  };
+}
+```
+
+Usage:
+
+```ts
+import { senderBlock } from "@puiusabin/fumi/plugins";
+
+app.use(senderBlock(["spam.example", "blocked.org"]));
+```
+
+### Recipient Filter Plugin
+
+Only accepts recipients in allowed domains:
+
+```ts
+import type { Plugin } from "@puiusabin/fumi";
+
+export function rcptFilter(allowedDomains: string[]): Plugin {
+  const allowed = new Set(allowedDomains.map((d) => d.toLowerCase()));
+  
+  return (app) => {
+    app.onRcptTo(async (ctx, next) => {
+      const domain = ctx.address.address.split("@")[1]?.toLowerCase() ?? "";
+      if (!allowed.has(domain)) {
+        ctx.reject(`Recipient domain ${domain} not accepted`, 550);
+      }
+      await next();
+    });
+  };
+}
+```
+
+Usage:
+
+```ts
+import { rcptFilter } from "@puiusabin/fumi/plugins";
+
+app.use(rcptFilter(["mycompany.com", "subsidiary.com"]));
+```
+
+### Max Size Plugin
+
+Rejects messages exceeding a byte limit:
+
+```ts
+import type { Plugin } from "@puiusabin/fumi";
+
+export function maxSize(bytes: number): Plugin {
+  return (app) => {
+    app.onData(async (ctx, next) => {
+      await next();
+      await ctx.stream.pipeTo(new WritableStream());
+      if (ctx.sizeExceeded) {
+        ctx.reject(`Message exceeds the maximum size of ${bytes} bytes`, 552);
+      }
+    });
+  };
+}
+```
+
+Usage:
+
+```ts
+import { maxSize } from "@puiusabin/fumi/plugins";
+
+const app = new Fumi({ size: 1_000_000 });
+app.use(maxSize(1_000_000));
+```
+
+<Warning>
+  The `maxSize` plugin requires `FumiOptions.size` to be set to the same value for size tracking to work.
+</Warning>
+
+### Require TLS Plugin
+
+Rejects MAIL FROM on unencrypted connections:
+
+```ts
+import type { Plugin } from "@puiusabin/fumi";
+
+export function requireTls(): Plugin {
+  return (app) => {
+    app.onMailFrom(async (ctx, next) => {
+      if (!ctx.session.secure) {
+        ctx.reject("Must issue STARTTLS first", 530);
+      }
+      await next();
+    });
+  };
+}
+```
+
+Usage:
+
+```ts
+import { requireTls } from "@puiusabin/fumi/plugins";
+
+app.use(requireTls());
+```
+
+## Creating Custom Plugins
+
+### Plugin with Configuration
+
+Plugins can accept parameters:
+
+```ts
+import type { Plugin } from "@puiusabin/fumi";
+
+interface RateLimitOptions {
+  maxConnections: number;
+  windowMs: number;
+}
+
+export function rateLimit(options: RateLimitOptions): Plugin {
+  const connections = new Map<string, number[]>();
+  
+  return (app) => {
+    app.onConnect(async (ctx, next) => {
+      const ip = ctx.session.remoteAddress;
+      const now = Date.now();
+      const window = options.windowMs;
+      
+      // Get recent connections from this IP
+      const timestamps = connections.get(ip) || [];
+      const recent = timestamps.filter(t => now - t < window);
+      
+      if (recent.length >= options.maxConnections) {
+        ctx.reject("Rate limit exceeded", 421);
+      }
+      
+      // Record this connection
+      recent.push(now);
+      connections.set(ip, recent);
+      
+      await next();
+    });
+  };
+}
+```
+
+Usage:
+
+```ts
+app.use(rateLimit({
+  maxConnections: 10,
+  windowMs: 60000  // 1 minute
+}));
+```
+
+### Plugin with Multiple Hooks
+
+Plugins can register middleware for multiple phases:
+
+```ts
+import type { Plugin } from "@puiusabin/fumi";
+
+interface MetricsCollector {
+  recordConnection(ip: string): void;
+  recordMessage(from: string, to: string[]): void;
+}
+
+export function metrics(collector: MetricsCollector): Plugin {
+  return (app) => {
+    app.onConnect(async (ctx, next) => {
+      collector.recordConnection(ctx.session.remoteAddress);
+      await next();
+    });
+    
+    app.onData(async (ctx, next) => {
+      const { mailFrom, rcptTo } = ctx.session.envelope;
+      collector.recordMessage(
+        mailFrom.address,
+        rcptTo.map(r => r.address)
+      );
+      await next();
+    });
+  };
+}
+```
+
+### Plugin with State
+
+Plugins can maintain internal state:
+
+```ts
+import type { Plugin } from "@puiusabin/fumi";
+
+export function greylisting(): Plugin {
+  const seen = new Map<string, Date>();
+  const approved = new Set<string>();
+  const delayMinutes = 5;
+  
+  return (app) => {
+    app.onMailFrom(async (ctx, next) => {
+      const key = `${ctx.session.remoteAddress}:${ctx.address.address}`;
+      
+      if (approved.has(key)) {
+        // Already approved
+        await next();
+        return;
+      }
+      
+      const firstSeen = seen.get(key);
+      
+      if (!firstSeen) {
+        // First attempt - record and reject
+        seen.set(key, new Date());
+        ctx.reject("Please try again later", 451);
+      }
+      
+      const elapsed = Date.now() - firstSeen.getTime();
+      const delayMs = delayMinutes * 60 * 1000;
+      
+      if (elapsed < delayMs) {
+        // Too soon
+        ctx.reject("Please try again later", 451);
+      }
+      
+      // Approve and remember
+      approved.add(key);
+      await next();
+    });
+  };
+}
+```
+
+## Best Practices
+
+<Steps>
+
+### Return a Plugin Function
+
+Always return `(app: Fumi) => void`:
+
+```ts
+// Good
+export function myPlugin(): Plugin {
+  return (app) => {
+    app.onConnect(async (ctx, next) => {
+      await next();
+    });
+  };
+}
+
+// Bad - not a function
+export const myPlugin: Plugin = (app) => {
+  app.onConnect(async (ctx, next) => {
+    await next();
+  });
+};
+```
+
+### Use TypeScript
+
+Type your plugins for better developer experience:
+
+```ts
+import type { Plugin, ConnectContext } from "@puiusabin/fumi";
+
+export function myPlugin(): Plugin {
+  return (app) => {
+    app.onConnect(async (ctx: ConnectContext, next) => {
+      // ctx is fully typed
+      console.log(ctx.session.remoteAddress);
+      await next();
+    });
+  };
+}
+```
+
+### Always Call next()
+
+Unless you're rejecting, always call `await next()`:
+
+```ts
+export function myPlugin(): Plugin {
+  return (app) => {
+    app.onConnect(async (ctx, next) => {
+      // Do work before subsequent middleware
+      console.log("Before");
+      
+      await next();  // Let other middleware run
+      
+      // Do work after subsequent middleware
+      console.log("After");
+    });
+  };
+}
+```
+
+### Handle Errors Gracefully
+
+Use try-catch for error handling:
+
+```ts
+export function myPlugin(): Plugin {
+  return (app) => {
+    app.onData(async (ctx, next) => {
+      try {
+        await processMessage(ctx);
+        await next();
+      } catch (err) {
+        console.error("Processing failed:", err);
+        ctx.reject("Processing error", 451);
+      }
+    });
+  };
+}
+```
+
+### Document Your Plugin
+
+Provide JSDoc comments:
+
+```ts
+/**
+ * Blocks connections from IP addresses in a denylist.
+ * 
+ * @example
+ * app.use(denylist(["192.168.1.100", "10.0.0.50"]))
+ * 
+ * @param ips - Array of IP addresses to block
+ * @returns Plugin that rejects blocked IPs with code 550
+ */
+export function denylist(ips: string[]): Plugin {
+  const blocked = new Set(ips);
+  return (app) => {
+    app.onConnect(async (ctx, next) => {
+      if (blocked.has(ctx.session.remoteAddress)) {
+        ctx.reject("Connection refused", 550);
+      }
+      await next();
+    });
+  };
+}
+```
+
+### Make Plugins Configurable
+
+Accept options for flexibility:
+
+```ts
+interface DenylistOptions {
+  ips: string[];
+  message?: string;
+  code?: number;
+}
+
+export function denylist(options: DenylistOptions): Plugin {
+  const blocked = new Set(options.ips);
+  const message = options.message || "Connection refused";
+  const code = options.code || 550;
+  
+  return (app) => {
+    app.onConnect(async (ctx, next) => {
+      if (blocked.has(ctx.session.remoteAddress)) {
+        ctx.reject(message, code);
+      }
+      await next();
+    });
+  };
+}
+```
+
+</Steps>
+
+## Testing Plugins
+
+Test plugins by creating a Fumi instance and using the `smtpTalk` helper:
+
+```ts
+import { test, expect } from "bun:test";
+import { Fumi } from "@puiusabin/fumi";
+import { denylist } from "./denylist";
+
+test("denylist blocks IPs", async () => {
+  const app = new Fumi({ authOptional: true });
+  app.use(denylist(["127.0.0.1"]));
+  await app.listen(12525);
+  
+  const responses = await smtpTalk(12525, []);
+  expect(responses[0]).toContain("550");
+  
+  await app.close();
+});
+```
+
+## Publishing Plugins
+
+Package your plugin as an npm module:
+
+```json
+{
+  "name": "@yourname/fumi-plugin-example",
+  "version": "1.0.0",
+  "type": "module",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "types": "./dist/index.d.ts",
+  "peerDependencies": {
+    "@puiusabin/fumi": "^1.0.0"
+  }
+}
+```
+
+Export your plugin:
+
+```ts
+export { myPlugin } from "./my-plugin";
+export type { MyPluginOptions } from "./my-plugin";
+```
+
+Users can install and use it:
+
+```bash
+bun add @yourname/fumi-plugin-example
+```
+
+```ts
+import { Fumi } from "@puiusabin/fumi";
+import { myPlugin } from "@yourname/fumi-plugin-example";
+
+const app = new Fumi();
+app.use(myPlugin());
+```
+
+## Plugin Composition
+
+Combine multiple plugins:
+
+```ts
+import type { Plugin } from "@puiusabin/fumi";
+
+export function securitySuite(): Plugin {
+  return (app) => {
+    // Apply multiple plugins
+    app.use(denylist(["192.168.1.100"]));
+    app.use(requireTls());
+    app.use(rateLimit({ maxConnections: 10, windowMs: 60000 }));
+  };
+}
+```
+
+Usage:
+
+```ts
+app.use(securitySuite());
+```
+
+## Next Steps
+
+- Review [Authentication](/guides/authentication) for auth-related plugins
+- Check [TLS & Security](/guides/tls-security) for security plugins
+- See [Message Processing](/guides/message-processing) for data handling plugins
+- Explore the [source code](https://github.com/puiusabin/fumi/tree/main/source/plugins) for more examples

@@ -1,0 +1,434 @@
+---
+title: "Error Handling"
+description: "Managing errors and rejections in SMTP middleware with SMTPError and response codes"
+---
+
+Fumi provides a structured approach to error handling through the `SMTPError` class and context-specific `reject()` methods. This allows you to return proper SMTP response codes while maintaining clean, predictable middleware flow.
+
+## SMTPError Class
+
+The `SMTPError` class extends the standard JavaScript `Error` and adds an SMTP response code.
+
+### Constructor
+
+```typescript
+new SMTPError(message: string, responseCode?: number)
+```
+
+<ParamField path="message" type="string" required>
+  Error message sent to the SMTP client
+</ParamField>
+
+<ParamField path="responseCode" type="number" default="550">
+  SMTP response code (default: 550)
+</ParamField>
+
+See: `~/workspace/source/src/types.ts:3`
+
+### Basic Usage
+
+```typescript
+import { SMTPError } from 'fumi';
+
+// Create error with default code (550)
+throw new SMTPError('Access denied');
+
+// Create error with custom code
+throw new SMTPError('Temporary failure', 421);
+throw new SMTPError('Authentication failed', 535);
+throw new SMTPError('Message too large', 552);
+```
+
+### Properties
+
+<ParamField path="name" type="string" required>
+  Always set to `"SMTPError"`
+</ParamField>
+
+<ParamField path="message" type="string" required>
+  The error message
+</ParamField>
+
+<ParamField path="responseCode" type="number" required>
+  The SMTP response code
+</ParamField>
+
+```typescript
+try {
+  throw new SMTPError('Rejected', 450);
+} catch (err) {
+  if (err instanceof SMTPError) {
+    console.log(err.name);         // "SMTPError"
+    console.log(err.message);      // "Rejected"
+    console.log(err.responseCode); // 450
+  }
+}
+```
+
+## Using `ctx.reject()`
+
+All context objects (except `CloseContext`) provide a `reject()` method that throws an `SMTPError` internally. This is the recommended way to reject requests in middleware.
+
+```typescript
+ctx.reject(message?: string, code?: number): never
+```
+
+### Phase-Specific Default Codes
+
+Each phase has a sensible default response code:
+
+<ParamField path="onConnect" type="reject()" default="550">
+  Connection-level rejections
+</ParamField>
+
+<ParamField path="onAuth" type="reject()" default="535">
+  Authentication failures
+</ParamField>
+
+<ParamField path="onMailFrom" type="reject()" default="550">
+  Sender rejections
+</ParamField>
+
+<ParamField path="onRcptTo" type="reject()" default="550">
+  Recipient rejections
+</ParamField>
+
+<ParamField path="onData" type="reject()" default="552">
+  Message data rejections (typically size-related)
+</ParamField>
+
+See: `~/workspace/source/src/fumi.ts:19`
+
+### Examples by Phase
+
+#### Connect Phase
+
+```typescript
+app.onConnect(async (ctx, next) => {
+  // Use default code (550)
+  if (isBlocked(ctx.session.remoteAddress)) {
+    ctx.reject('Access denied');
+  }
+  
+  // Custom code for temporary rejection
+  if (isOverloaded()) {
+    ctx.reject('Server busy, try again later', 421);
+  }
+  
+  await next();
+});
+```
+
+#### Auth Phase
+
+```typescript
+app.onAuth(async (ctx, next) => {
+  const { username, password } = ctx.credentials;
+  
+  // Use default code (535)
+  if (!isValidCredentials(username, password)) {
+    ctx.reject('Invalid credentials');
+  }
+  
+  // Custom code for account issues
+  if (isAccountLocked(username)) {
+    ctx.reject('Account locked', 530);
+  }
+  
+  ctx.accept({ username });
+  await next();
+});
+```
+
+#### MailFrom Phase
+
+```typescript
+app.onMailFrom(async (ctx, next) => {
+  const sender = ctx.address.address;
+  
+  // Use default code (550)
+  if (sender.endsWith('@spam.example')) {
+    ctx.reject('Domain blocked');
+  }
+  
+  // Custom code for policy violation
+  if (!isAllowedSender(sender)) {
+    ctx.reject('Sender not authorized', 551);
+  }
+  
+  await next();
+});
+```
+
+#### RcptTo Phase
+
+```typescript
+app.onRcptTo(async (ctx, next) => {
+  const recipient = ctx.address.address;
+  
+  // Use default code (550)
+  if (!isLocalUser(recipient)) {
+    ctx.reject('User unknown');
+  }
+  
+  // Custom code for quota exceeded
+  if (isMailboxFull(recipient)) {
+    ctx.reject('Mailbox full', 552);
+  }
+  
+  await next();
+});
+```
+
+#### Data Phase
+
+```typescript
+app.onData(async (ctx, next) => {
+  // Use default code (552)
+  if (ctx.sizeExceeded) {
+    ctx.reject('Message too large');
+  }
+  
+  // Read and validate message
+  const chunks: Uint8Array[] = [];
+  for await (const chunk of ctx.stream) {
+    chunks.push(chunk);
+  }
+  const message = Buffer.concat(chunks).toString();
+  
+  // Custom code for content filter
+  if (containsVirus(message)) {
+    ctx.reject('Message rejected: virus detected', 550);
+  }
+  
+  await next();
+});
+```
+
+## Common SMTP Response Codes
+
+### Success Codes (2xx)
+
+- **220**: Service ready
+- **221**: Service closing transmission channel
+- **235**: Authentication successful
+- **250**: Requested mail action okay, completed
+- **354**: Start mail input
+
+### Temporary Failure (4xx)
+
+- **421**: Service not available, closing transmission channel
+- **450**: Requested mail action not taken: mailbox unavailable
+- **451**: Requested action aborted: local error in processing
+- **452**: Requested action not taken: insufficient system storage
+
+### Permanent Failure (5xx)
+
+- **530**: Authentication required
+- **535**: Authentication credentials invalid
+- **550**: Requested action not taken: mailbox unavailable
+- **551**: User not local
+- **552**: Requested mail action aborted: exceeded storage allocation
+- **553**: Requested action not taken: mailbox name not allowed
+
+### Usage Examples
+
+```typescript
+// Temporary failures (4xx) - client should retry
+ctx.reject('Greylisting in effect, try again later', 451);
+ctx.reject('Server busy', 421);
+ctx.reject('Temporary authentication failure', 454);
+
+// Permanent failures (5xx) - client should not retry
+ctx.reject('Access denied', 550);
+ctx.reject('Authentication required', 530);
+ctx.reject('Invalid credentials', 535);
+ctx.reject('Message too large', 552);
+```
+
+## Error Bridging
+
+When errors are thrown in middleware, Fumi automatically bridges them to SMTP responses:
+
+```typescript
+app.onMailFrom(async (ctx, next) => {
+  // SMTPError - uses specified response code
+  throw new SMTPError('Sender blocked', 550);
+  // → SMTP response: 550 Sender blocked
+  
+  await next();
+});
+
+app.onConnect(async (ctx, next) => {
+  // Regular Error - defaults to 500
+  throw new Error('Unexpected database error');
+  // → SMTP response: 500 Unexpected database error
+  
+  await next();
+});
+```
+
+See: `~/workspace/source/src/fumi.ts:25`
+
+<Warning>
+Regular JavaScript errors thrown in middleware will result in a 500 response code. Always use `SMTPError` or `ctx.reject()` for controlled error responses.
+</Warning>
+
+## Error Handling Patterns
+
+### Try-Catch with SMTPError
+
+```typescript
+app.onMailFrom(async (ctx, next) => {
+  try {
+    const sender = ctx.address.address;
+    await validateSender(sender);
+    await next();
+  } catch (err) {
+    if (err instanceof Error && err.message.includes('rate limit')) {
+      ctx.reject('Rate limit exceeded, try again later', 451);
+    }
+    throw err; // Re-throw unknown errors
+  }
+});
+```
+
+### Conditional Rejections
+
+```typescript
+app.onRcptTo(async (ctx, next) => {
+  const recipient = ctx.address.address;
+  
+  // Early return pattern
+  if (!isValidEmail(recipient)) {
+    ctx.reject('Invalid email format', 553);
+    return; // Never reached (ctx.reject throws)
+  }
+  
+  if (!domainExists(recipient)) {
+    ctx.reject('Domain does not exist', 550);
+  }
+  
+  await next();
+});
+```
+
+### Validation Chain
+
+```typescript
+app.onData(async (ctx, next) => {
+  const chunks: Uint8Array[] = [];
+  for await (const chunk of ctx.stream) {
+    chunks.push(chunk);
+  }
+  const message = Buffer.concat(chunks).toString();
+  
+  // Chain of validations
+  const validations = [
+    { test: () => message.length > 0, error: 'Empty message', code: 550 },
+    { test: () => !containsVirus(message), error: 'Virus detected', code: 550 },
+    { test: () => !isSpam(message), error: 'Spam detected', code: 550 },
+  ];
+  
+  for (const { test, error, code } of validations) {
+    if (!test()) {
+      ctx.reject(error, code);
+    }
+  }
+  
+  await next();
+});
+```
+
+### Plugin Error Handling
+
+```typescript
+import type { Fumi } from 'fumi';
+
+export function denylist(blockedIps: string[]) {
+  return (app: Fumi) => {
+    app.onConnect(async (ctx, next) => {
+      const ip = ctx.session.remoteAddress;
+      
+      if (blockedIps.includes(ip)) {
+        // Clear, actionable error message
+        ctx.reject(`IP ${ip} is blocked`, 550);
+      }
+      
+      await next();
+    });
+  };
+}
+```
+
+## Close Phase Exception
+
+The `onClose` phase does not support error handling. Errors are silently caught:
+
+```typescript
+app.onClose(async (ctx) => {
+  // No ctx.reject() available
+  // Errors thrown here are swallowed
+  
+  try {
+    await cleanupSession(ctx.session.id);
+  } catch (err) {
+    console.error('Cleanup failed:', err);
+    // Can't reject - connection is already closed
+  }
+});
+```
+
+See: `~/workspace/source/src/fumi.ts:224`
+
+<Note>
+`onClose` is fire-and-forget. The connection is already terminated, so there's no client to send error responses to.
+</Note>
+
+## Best Practices
+
+1. **Use `ctx.reject()` instead of throwing `SMTPError` directly**
+   ```typescript
+   // Preferred
+   ctx.reject('Invalid sender', 550);
+   
+   // Also works but less idiomatic
+   throw new SMTPError('Invalid sender', 550);
+   ```
+
+2. **Choose appropriate response codes**
+   - Use 4xx for temporary failures (retry possible)
+   - Use 5xx for permanent failures (don't retry)
+   - Use 530/535 for authentication issues
+
+3. **Provide clear error messages**
+   ```typescript
+   // Good - actionable message
+   ctx.reject('Sender domain not found in DNS', 550);
+   
+   // Bad - vague message
+   ctx.reject('Error', 550);
+   ```
+
+4. **Let unexpected errors bubble up**
+   ```typescript
+   app.onMailFrom(async (ctx, next) => {
+     try {
+       await validateSender(ctx.address.address);
+     } catch (err) {
+       // Only catch expected errors
+       if (err instanceof ValidationError) {
+         ctx.reject(err.message, 550);
+       }
+       // Let unexpected errors propagate (will become 500)
+       throw err;
+     }
+     await next();
+   });
+   ```
+
+## Next Steps
+
+- Learn about [Middleware](/concepts/middleware) composition
+- Understand [Context Objects](/concepts/context) for each phase
+- Explore [Sessions](/concepts/sessions) for tracking state

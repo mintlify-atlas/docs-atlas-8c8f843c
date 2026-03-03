@@ -1,0 +1,105 @@
+---
+title: Max Size
+description: Reject messages that exceed a size limit
+---
+
+The `maxSize` plugin enforces message size limits by rejecting emails that exceed a specified byte threshold. This helps protect your server from resource exhaustion and ensures compliance with message size policies.
+
+## What It Does
+
+The maxSize plugin:
+- Monitors incoming message size during the DATA phase
+- Rejects messages that exceed the configured byte limit
+- Returns an RFC-compliant 552 error code when the limit is exceeded
+
+## Function Signature
+
+```typescript
+function maxSize(bytes: number): Plugin
+```
+
+### Parameters
+
+<ParamField path="bytes" type="number" required>
+  Maximum message size in bytes. Messages exceeding this limit will be rejected with a 552 error code.
+</ParamField>
+
+## Usage
+
+Import and configure the maxSize plugin with your desired byte limit:
+
+```typescript
+import { Fumi } from "fumi";
+import { maxSize } from "fumi/plugins";
+
+// Create Fumi instance with size tracking enabled
+const app = new Fumi({ 
+  size: 1_000_000  // 1 MB
+});
+
+// Add the maxSize plugin with the same limit
+app.use(maxSize(1_000_000));
+
+app.listen();
+```
+
+<Note>
+**Important**: You must set `FumiOptions.size` to the same byte value when creating your Fumi instance. This enables the underlying SMTP library to track message size and set the `sizeExceeded` flag on the stream.
+
+```typescript
+const app = new Fumi({ size: 1_000_000 });
+app.use(maxSize(1_000_000));
+```
+
+If `FumiOptions.size` is not set, the plugin will not function correctly.
+</Note>
+
+## Example with Different Limits
+
+```typescript
+import { Fumi } from "fumi";
+import { maxSize } from "fumi/plugins";
+
+// 5 MB limit
+const FIVE_MB = 5 * 1024 * 1024;
+
+const app = new Fumi({ size: FIVE_MB });
+app.use(maxSize(FIVE_MB));
+
+app.listen();
+```
+
+## Error Response
+
+When a message exceeds the size limit, clients receive:
+
+```
+552 Message exceeds the maximum size of 1000000 bytes
+```
+
+The 552 status code is the standard SMTP code for "message exceeds fixed maximum message size".
+
+## Implementation
+
+The plugin hooks into the `onData` event and checks the `sizeExceeded` flag after the message stream is consumed:
+
+```typescript
+export function maxSize(bytes: number): Plugin {
+  return (app) => {
+    app.onData(async (ctx, next) => {
+      await next();
+      await ctx.stream.pipeTo(new WritableStream());
+      if (ctx.sizeExceeded) {
+        ctx.reject(`Message exceeds the maximum size of ${bytes} bytes`, 552);
+      }
+    });
+  };
+}
+```
+
+## Common Size Limits
+
+- **1 MB**: `1_000_000` or `1 * 1024 * 1024`
+- **5 MB**: `5_000_000` or `5 * 1024 * 1024`
+- **10 MB**: `10_000_000` or `10 * 1024 * 1024`
+- **25 MB**: `25_000_000` or `25 * 1024 * 1024` (Gmail's limit)

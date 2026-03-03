@@ -1,0 +1,293 @@
+---
+title: "Middleware"
+description: "Understanding Fumi's Koa-style middleware system for SMTP request handling"
+---
+
+Fumi uses a powerful Koa-style middleware system that lets you compose request handlers for different phases of the SMTP conversation. Each middleware function receives a context object and a `next` function, allowing you to build flexible, composable logic.
+
+## Middleware Pattern
+
+Middleware functions follow the `(ctx, next)` pattern:
+
+```typescript
+import { Fumi } from "fumi";
+
+const app = new Fumi();
+
+app.onMailFrom(async (ctx, next) => {
+  // Code before next() runs before downstream middleware
+  console.log(`Sender: ${ctx.address.address}`);
+  
+  // Call next() to pass control to the next middleware
+  await next();
+  
+  // Code after next() runs after downstream middleware completes
+  console.log('MailFrom processing complete');
+});
+```
+
+<Note>
+Always `await next()` to ensure downstream middleware completes before continuing execution.
+</Note>
+
+## Middleware Composition
+
+Middleware chains execute in registration order. Fumi uses an internal compose function (`~/workspace/source/src/compose.ts:3`) to build these chains:
+
+```typescript
+const app = new Fumi({ authOptional: true });
+
+// Execution flows: 1 → 2 → 3 → 2 → 1
+app.onMailFrom(async (ctx, next) => {
+  console.log('1: before');
+  await next();
+  console.log('1: after');
+});
+
+app.onMailFrom(async (ctx, next) => {
+  console.log('2: before');
+  await next();
+  console.log('2: after');
+});
+
+app.onMailFrom(async (ctx, next) => {
+  console.log('3: final handler');
+  // No next() call - end of chain
+});
+```
+
+**Output:**
+```
+1: before
+2: before
+3: final handler
+2: after
+1: after
+```
+
+<Warning>
+Calling `next()` multiple times in the same middleware will throw an error: `"next() called multiple times"`
+</Warning>
+
+## SMTP Phases
+
+Fumi provides middleware hooks for six distinct SMTP phases:
+
+### 1. Connect (`onConnect`)
+
+Runs when a client first connects to the server.
+
+```typescript
+app.onConnect(async (ctx, next) => {
+  console.log(`Connection from ${ctx.session.remoteAddress}`);
+  
+  // Block connections from specific IPs
+  if (ctx.session.remoteAddress === '192.0.2.1') {
+    ctx.reject('Access denied', 550);
+  }
+  
+  await next();
+});
+```
+
+See: `~/workspace/source/src/fumi.ts:118`
+
+### 2. Auth (`onAuth`)
+
+Handles SMTP authentication. Must call `ctx.accept()` to allow authentication.
+
+```typescript
+app.onAuth(async (ctx, next) => {
+  const { username, password } = ctx.credentials;
+  
+  if (username === 'admin' && password === 'secret') {
+    ctx.accept({ id: 1, name: 'Admin' });
+  } else {
+    ctx.reject('Invalid credentials', 535);
+  }
+  
+  await next();
+});
+```
+
+See: `~/workspace/source/src/fumi.ts:133`
+
+### 3. Mail From (`onMailFrom`)
+
+Processes the `MAIL FROM` command and sender address.
+
+```typescript
+app.onMailFrom(async (ctx, next) => {
+  const sender = ctx.address.address;
+  
+  // Block specific sender domains
+  if (sender.endsWith('@spam.example')) {
+    ctx.reject('Sender domain blocked', 550);
+  }
+  
+  await next();
+});
+```
+
+See: `~/workspace/source/src/fumi.ts:166`
+
+### 4. Recipient To (`onRcptTo`)
+
+Handles each `RCPT TO` command. Called once per recipient.
+
+```typescript
+app.onRcptTo(async (ctx, next) => {
+  const recipient = ctx.address.address;
+  
+  // Only accept mail for specific domains
+  if (!recipient.endsWith('@mycompany.com')) {
+    ctx.reject('Recipient not accepted', 550);
+  }
+  
+  await next();
+});
+```
+
+See: `~/workspace/source/src/fumi.ts:183`
+
+### 5. Data (`onData`)
+
+Processes the message body after the `DATA` command.
+
+```typescript
+app.onData(async (ctx, next) => {
+  // Check if message exceeded size limit
+  if (ctx.sizeExceeded) {
+    ctx.reject('Message too large', 552);
+  }
+  
+  // Read the message stream
+  const chunks: Uint8Array[] = [];
+  for await (const chunk of ctx.stream) {
+    chunks.push(chunk);
+  }
+  const body = Buffer.concat(chunks).toString();
+  
+  console.log('Received message:', body);
+  await next();
+});
+```
+
+See: `~/workspace/source/src/fumi.ts:200`
+
+### 6. Close (`onClose`)
+
+Fires when the connection closes. Fire-and-forget - errors are swallowed.
+
+```typescript
+app.onClose(async (ctx) => {
+  console.log(`Session ${ctx.session.id} ended`);
+  // Cleanup resources, log analytics, etc.
+});
+```
+
+<Note>
+`onClose` is fire-and-forget. It doesn't support `ctx.reject()` and errors are silently caught.
+</Note>
+
+See: `~/workspace/source/src/fumi.ts:220`
+
+## Building Plugins
+
+Middleware can be packaged as reusable plugins:
+
+```typescript
+import type { Fumi } from 'fumi';
+
+// Plugin function receives the Fumi instance
+export function denylist(blockedIps: string[]) {
+  return (app: Fumi) => {
+    app.onConnect(async (ctx, next) => {
+      if (blockedIps.includes(ctx.session.remoteAddress)) {
+        ctx.reject('Access denied', 550);
+      }
+      await next();
+    });
+  };
+}
+
+// Usage
+const app = new Fumi();
+app.use(denylist(['192.0.2.1', '192.0.2.2']));
+```
+
+## Real-World Examples
+
+### Logging Middleware
+
+```typescript
+app.onConnect(async (ctx, next) => {
+  console.log(`[${ctx.session.id}] Connected: ${ctx.session.remoteAddress}`);
+  await next();
+});
+
+app.onMailFrom(async (ctx, next) => {
+  console.log(`[${ctx.session.id}] MAIL FROM: ${ctx.address.address}`);
+  await next();
+});
+
+app.onRcptTo(async (ctx, next) => {
+  console.log(`[${ctx.session.id}] RCPT TO: ${ctx.address.address}`);
+  await next();
+});
+```
+
+### Rate Limiting
+
+```typescript
+const connections = new Map<string, number>();
+
+app.onConnect(async (ctx, next) => {
+  const ip = ctx.session.remoteAddress;
+  const count = (connections.get(ip) || 0) + 1;
+  
+  if (count > 10) {
+    ctx.reject('Too many connections', 421);
+  }
+  
+  connections.set(ip, count);
+  await next();
+});
+
+app.onClose(async (ctx) => {
+  const ip = ctx.session.remoteAddress;
+  const count = connections.get(ip) || 0;
+  connections.set(ip, Math.max(0, count - 1));
+});
+```
+
+### Content Filtering
+
+```typescript
+app.onData(async (ctx, next) => {
+  const chunks: Uint8Array[] = [];
+  for await (const chunk of ctx.stream) {
+    chunks.push(chunk);
+  }
+  const message = Buffer.concat(chunks).toString();
+  
+  // Check for spam patterns
+  if (message.includes('CLICK HERE NOW')) {
+    ctx.reject('Message rejected as spam', 550);
+  }
+  
+  await next();
+});
+```
+
+## Performance Considerations
+
+<Note>
+Fumi only builds middleware runners for phases that have registered middleware (`~/workspace/source/src/fumi.ts:107`). Empty phases fall back to the underlying SMTP server's default behavior, avoiding unnecessary Promise allocation overhead.
+</Note>
+
+## Next Steps
+
+- Learn about [Context Objects](/concepts/context) available in each phase
+- Understand [Session Management](/concepts/sessions)
+- Explore [Error Handling](/concepts/error-handling) with `ctx.reject()`

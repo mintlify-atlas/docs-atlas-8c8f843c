@@ -1,0 +1,368 @@
+---
+title: TLS & Security
+description: Configure TLS encryption and security options for your Fumi SMTP server
+---
+
+Fumi supports both implicit TLS (port 465) and STARTTLS for securing SMTP connections. This guide covers TLS configuration, security best practices, and current limitations.
+
+## TLS Configuration Options
+
+Configure TLS through `FumiOptions`:
+
+```ts
+interface FumiOptions {
+  secure?: boolean;           // Enable implicit TLS (port 465)
+  key?: string | Buffer;      // TLS private key
+  cert?: string | Buffer;     // TLS certificate
+  ca?: string | Buffer;       // Certificate authority
+  requireTLS?: boolean;       // Require TLS before accepting mail
+}
+```
+
+## Implicit TLS (Port 465)
+
+The recommended approach is implicit TLS on port 465, where the connection is encrypted from the start:
+
+```ts
+import { Fumi } from "@puiusabin/fumi";
+
+const app = new Fumi({
+  secure: true,
+  key: await Bun.file("./private-key.pem").text(),
+  cert: await Bun.file("./certificate.pem").text()
+});
+
+await app.listen(465);
+```
+
+### Loading Certificates
+
+Certificates can be provided as strings or Buffers:
+
+<Tabs>
+  <Tab title="Bun.file">
+    ```ts
+    const app = new Fumi({
+      secure: true,
+      key: await Bun.file("./key.pem").text(),
+      cert: await Bun.file("./cert.pem").text(),
+      ca: await Bun.file("./ca.pem").text()  // Optional CA chain
+    });
+    ```
+  </Tab>
+  
+  <Tab title="Buffer">
+    ```ts
+    const app = new Fumi({
+      secure: true,
+      key: Buffer.from(process.env.TLS_KEY!, "base64"),
+      cert: Buffer.from(process.env.TLS_CERT!, "base64")
+    });
+    ```
+  </Tab>
+  
+  <Tab title="Inline String">
+    ```ts
+    const app = new Fumi({
+      secure: true,
+      key: `-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----`,
+      cert: `-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----`
+    });
+    ```
+  </Tab>
+</Tabs>
+
+## STARTTLS Limitation
+
+<Warning>
+  **STARTTLS is not production-ready.** Bun does not support `socket.upgradeTLS()` on server-side sockets ([oven-sh/bun#25044](https://github.com/oven-sh/bun/issues/25044)), which means the STARTTLS command will crash or silently fail.
+  
+  **In production:**
+  - Use implicit TLS (port 465), or
+  - Terminate TLS externally with HAProxy, stunnel, or nginx
+  
+  Upvote the [Bun issue](https://github.com/oven-sh/bun/issues/25044) to help prioritize a fix.
+</Warning>
+
+## Requiring TLS
+
+Fumi provides two ways to enforce TLS encryption:
+
+### Option 1: FumiOptions.requireTLS
+
+Protocol-level enforcement that rejects MAIL FROM before TLS upgrade:
+
+```ts
+const app = new Fumi({
+  requireTLS: true,
+  key: await Bun.file("./key.pem").text(),
+  cert: await Bun.file("./cert.pem").text()
+});
+
+await app.listen(25);
+```
+
+This enforces TLS at the SMTP protocol level without requiring middleware.
+
+### Option 2: requireTls() Plugin
+
+Middleware-based enforcement for more control:
+
+```ts
+import { Fumi } from "@puiusabin/fumi";
+import { requireTls } from "@puiusabin/fumi/plugins";
+
+const app = new Fumi({
+  key: await Bun.file("./key.pem").text(),
+  cert: await Bun.file("./cert.pem").text()
+});
+
+app.use(requireTls());
+
+await app.listen(25);
+```
+
+The plugin rejects MAIL FROM commands on unencrypted connections with code 530 (RFC 3207 standard response).
+
+### Plugin Source
+
+The `requireTls()` plugin is simple and demonstrates middleware-based security:
+
+```ts
+import type { Plugin } from "@puiusabin/fumi";
+
+export function requireTls(): Plugin {
+  return (app) => {
+    app.onMailFrom(async (ctx, next) => {
+      if (!ctx.session.secure) {
+        ctx.reject("Must issue STARTTLS first", 530);
+      }
+      await next();
+    });
+  };
+}
+```
+
+You can use this pattern to create custom security policies.
+
+## TLS with Authentication
+
+Combine TLS with authentication for secure authenticated delivery:
+
+```ts
+import { Fumi } from "@puiusabin/fumi";
+
+const app = new Fumi({
+  secure: true,
+  key: await Bun.file("./key.pem").text(),
+  cert: await Bun.file("./cert.pem").text(),
+  authMethods: ["PLAIN", "LOGIN"]
+  // allowInsecureAuth not needed - connection is already secure
+});
+
+app.onAuth(async (ctx, next) => {
+  // Credentials are encrypted in transit
+  const user = await validateCredentials(ctx.credentials);
+  
+  if (user) {
+    ctx.accept(user);
+  } else {
+    ctx.reject("Authentication failed", 535);
+  }
+  
+  await next();
+});
+
+await app.listen(465);
+```
+
+<Info>
+  When `secure: true`, authentication over unencrypted connections is automatically blocked. You don't need `allowInsecureAuth: false`.
+</Info>
+
+## Checking Connection Security
+
+Check if a connection is encrypted using `ctx.session.secure`:
+
+```ts
+app.onMailFrom(async (ctx, next) => {
+  if (ctx.session.secure) {
+    console.log("Encrypted connection from", ctx.session.remoteAddress);
+  } else {
+    console.log("Unencrypted connection from", ctx.session.remoteAddress);
+  }
+  
+  await next();
+});
+```
+
+The `secure` property is `true` for:
+- Implicit TLS connections (port 465)
+- Connections upgraded with STARTTLS (when supported)
+
+## Production TLS Setup
+
+### Using Let's Encrypt
+
+```ts
+import { Fumi } from "@puiusabin/fumi";
+
+const app = new Fumi({
+  secure: true,
+  key: await Bun.file("/etc/letsencrypt/live/mail.example.com/privkey.pem").text(),
+  cert: await Bun.file("/etc/letsencrypt/live/mail.example.com/fullchain.pem").text()
+});
+
+await app.listen(465, "0.0.0.0");
+console.log("Secure SMTP server listening on port 465");
+```
+
+### Development Self-Signed Certificates
+
+Generate self-signed certificates for testing:
+
+```bash
+# Generate private key and certificate
+openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem \
+  -days 365 -nodes -subj '/CN=localhost'
+```
+
+Then use them in your app:
+
+```ts
+const app = new Fumi({
+  secure: true,
+  key: await Bun.file("./key.pem").text(),
+  cert: await Bun.file("./cert.pem").text()
+});
+
+await app.listen(465, "127.0.0.1");
+```
+
+<Warning>
+  Self-signed certificates should only be used in development. Production SMTP servers require certificates from a trusted CA.
+</Warning>
+
+## External TLS Termination
+
+For production with STARTTLS limitations, terminate TLS externally:
+
+### HAProxy Example
+
+```haproxy
+frontend smtp-frontend
+    bind *:465 ssl crt /etc/ssl/certs/mail.example.com.pem
+    mode tcp
+    default_backend smtp-backend
+
+backend smtp-backend
+    mode tcp
+    server smtp1 127.0.0.1:2525 check
+```
+
+Your Fumi server runs on port 2525 without TLS:
+
+```ts
+const app = new Fumi({ authOptional: true });
+await app.listen(2525, "127.0.0.1");
+```
+
+HAProxy handles TLS termination and forwards decrypted traffic to Fumi.
+
+### stunnel Example
+
+```ini
+[smtps]
+accept = 465
+connect = 127.0.0.1:2525
+cert = /etc/ssl/certs/mail.example.com.pem
+key = /etc/ssl/private/mail.example.com.key
+```
+
+## Security Best Practices
+
+<Steps>
+
+### Use Implicit TLS
+
+Prefer implicit TLS (port 465) over STARTTLS until Bun adds upgrade support:
+
+```ts
+const app = new Fumi({
+  secure: true,
+  key: await Bun.file("./key.pem").text(),
+  cert: await Bun.file("./cert.pem").text()
+});
+```
+
+### Require Authentication
+
+Don't allow anonymous mail submission:
+
+```ts
+const app = new Fumi({
+  secure: true,
+  key: await Bun.file("./key.pem").text(),
+  cert: await Bun.file("./cert.pem").text(),
+  authMethods: ["PLAIN", "LOGIN"]
+  // authOptional defaults to false - auth is required
+});
+```
+
+### Keep Certificates Updated
+
+Automate certificate renewal with Let's Encrypt:
+
+```bash
+# Use certbot with auto-renewal
+certbot renew --deploy-hook "systemctl restart fumi-smtp"
+```
+
+### Limit Client Connections
+
+Prevent resource exhaustion:
+
+```ts
+const app = new Fumi({
+  secure: true,
+  maxClients: 100,  // Limit concurrent connections
+  key: await Bun.file("./key.pem").text(),
+  cert: await Bun.file("./cert.pem").text()
+});
+```
+
+</Steps>
+
+## Additional Options
+
+### Hide STARTTLS Command
+
+If you're using implicit TLS only, hide the STARTTLS command from EHLO:
+
+```ts
+const app = new Fumi({
+  secure: true,
+  hideSTARTTLS: true,  // Don't advertise STARTTLS
+  key: await Bun.file("./key.pem").text(),
+  cert: await Bun.file("./cert.pem").text()
+});
+```
+
+### Hide REQUIRETLS Extension
+
+Control whether to advertise the REQUIRETLS extension:
+
+```ts
+const app = new Fumi({
+  secure: true,
+  hideREQUIRETLS: true,  // Don't advertise REQUIRETLS
+  key: await Bun.file("./key.pem").text(),
+  cert: await Bun.file("./cert.pem").text()
+});
+```
+
+## Next Steps
+
+- Learn about [Authentication](/guides/authentication) to secure your server
+- Explore [Message Processing](/guides/message-processing) for handling incoming mail
+- Check the [Building Plugins](/guides/building-plugins) guide for custom security middleware

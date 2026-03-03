@@ -1,0 +1,91 @@
+---
+title: Logger
+description: Log SMTP connection events and commands to stdout
+---
+
+The `logger` plugin provides visibility into SMTP server activity by logging each SMTP phase to the console. This is useful for debugging, monitoring, and auditing email traffic.
+
+## What It Does
+
+The logger plugin hooks into key SMTP lifecycle events and outputs information about:
+- New client connections
+- MAIL FROM commands (sender addresses)
+- RCPT TO commands (recipient addresses)
+- Connection closures
+
+Each log entry is prefixed with the event type and includes relevant connection or address information.
+
+## Function Signature
+
+```typescript
+function logger(): Plugin
+```
+
+The `logger` function takes no parameters and returns a Fumi plugin.
+
+## Usage
+
+Import and use the logger plugin in your Fumi application:
+
+```typescript
+import { Fumi } from "fumi";
+import { logger } from "fumi/plugins";
+
+const app = new Fumi();
+
+// Add the logger plugin
+app.use(logger());
+
+app.listen();
+```
+
+## Example Output
+
+When a client connects and sends an email, you'll see output like:
+
+```
+[connect] 192.168.1.100
+[mail from] sender@example.com
+[rcpt to] recipient@example.com
+[close] 192.168.1.100
+```
+
+## Implementation
+
+The logger plugin hooks into four lifecycle events:
+
+```typescript
+export function logger(): Plugin {
+  return (app) => {
+    app.onConnect(async (ctx, next) => {
+      console.log(`[connect] ${ctx.session.remoteAddress}`);
+      await next();
+    });
+
+    app.onMailFrom(async (ctx, next) => {
+      console.log(`[mail from] ${ctx.address.address}`);
+      await next();
+    });
+
+    app.onRcptTo(async (ctx, next) => {
+      console.log(`[rcpt to] ${ctx.address.address}`);
+      await next();
+    });
+
+    app.onClose(async (ctx) => {
+      console.log(`[close] ${ctx.session.remoteAddress}`);
+    });
+  };
+}
+```
+
+<Note>
+The logger plugin writes to `stdout` using `console.log`. In production environments, consider redirecting output to a file or using a more sophisticated logging solution.
+</Note>
+
+## Use Cases
+
+- **Development**: Monitor SMTP traffic during local development
+- **Debugging**: Trace connection and command flow to diagnose issues
+- **Auditing**: Keep simple logs of email activity
+- **Testing**: Verify that your SMTP server is receiving expected commands

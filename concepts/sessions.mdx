@@ -1,0 +1,338 @@
+---
+title: "Sessions"
+description: "Understanding session objects and how Fumi tracks SMTP conversation state"
+---
+
+Every SMTP connection in Fumi is represented by a `Session` object that tracks the conversation state from connection to close. The session object is available in all middleware contexts via `ctx.session`.
+
+## Session Object
+
+The session object contains metadata about the connection and the current transaction state.
+
+### Session Properties
+
+<ParamField path="id" type="string" required>
+  Unique identifier for this session
+</ParamField>
+
+<ParamField path="secure" type="boolean" required>
+  Whether the connection is using TLS/SSL
+</ParamField>
+
+<ParamField path="remoteAddress" type="string" required>
+  IP address of the connected client
+</ParamField>
+
+<ParamField path="clientHostname" type="string" required>
+  Hostname provided by the client in EHLO/HELO command
+</ParamField>
+
+<ParamField path="openingCommand" type="string" required>
+  The initial SMTP command used ("HELO" or "EHLO")
+</ParamField>
+
+<ParamField path="user" type="unknown" required>
+  User data set by `ctx.accept()` during authentication. `undefined` if not authenticated.
+</ParamField>
+
+<ParamField path="envelope" type="Envelope" required>
+  The current message envelope containing:
+  - `mailFrom`: Sender address and ESMTP arguments
+  - `rcptTo`: Array of recipient addresses and ESMTP arguments
+</ParamField>
+
+<ParamField path="transmissionType" type="string" required>
+  The transmission type (e.g., "ESMTP", "SMTP")
+</ParamField>
+
+See: `~/workspace/source/src/types.ts:23`
+
+## Accessing Session Data
+
+All middleware contexts provide access to the session:
+
+```typescript
+import { Fumi } from 'fumi';
+
+const app = new Fumi();
+
+app.onConnect(async (ctx, next) => {
+  console.log(`Session ${ctx.session.id} started`);
+  console.log(`Remote IP: ${ctx.session.remoteAddress}`);
+  console.log(`Secure: ${ctx.session.secure}`);
+  
+  await next();
+});
+
+app.onMailFrom(async (ctx, next) => {
+  console.log(`Session ${ctx.session.id}`);
+  console.log(`Client: ${ctx.session.clientHostname}`);
+  console.log(`Opening: ${ctx.session.openingCommand}`);
+  
+  await next();
+});
+```
+
+## Envelope Structure
+
+The envelope tracks sender and recipients for the current message transaction.
+
+### Before MAIL FROM
+
+```typescript
+app.onConnect(async (ctx, next) => {
+  // Envelope is empty at connection
+  console.log(ctx.session.envelope);
+  // { mailFrom: undefined, rcptTo: [] }
+  
+  await next();
+});
+```
+
+### After MAIL FROM
+
+```typescript
+app.onMailFrom(async (ctx, next) => {
+  // After MAIL FROM, envelope has sender
+  console.log(ctx.session.envelope.mailFrom);
+  // {
+  //   address: 'sender@example.com',
+  //   args: { SIZE: '12345', ... }
+  // }
+  
+  await next();
+});
+```
+
+### After RCPT TO
+
+```typescript
+app.onRcptTo(async (ctx, next) => {
+  // Recipients accumulate in the array
+  console.log(ctx.session.envelope.rcptTo);
+  // [
+  //   { address: 'user1@example.com', args: {} },
+  //   { address: 'user2@example.com', args: {} }
+  // ]
+  
+  await next();
+});
+```
+
+### During DATA
+
+```typescript
+app.onData(async (ctx, next) => {
+  // Complete envelope available
+  const { mailFrom, rcptTo } = ctx.session.envelope;
+  
+  console.log(`From: ${mailFrom.address}`);
+  console.log(`To: ${rcptTo.map(r => r.address).join(', ')}`);
+  
+  await next();
+});
+```
+
+## User Authentication
+
+The `session.user` property is set by calling `ctx.accept()` in authentication middleware:
+
+```typescript
+app.onAuth(async (ctx, next) => {
+  const { username, password } = ctx.credentials;
+  
+  const user = await authenticateUser(username, password);
+  if (user) {
+    // Attach user data to session
+    ctx.accept({
+      id: user.id,
+      username: user.username,
+      email: user.email,
+      roles: user.roles
+    });
+  } else {
+    ctx.reject('Authentication failed', 535);
+  }
+  
+  await next();
+});
+
+// Access user in later phases
+app.onMailFrom(async (ctx, next) => {
+  const user = ctx.session.user as { username: string };
+  console.log(`Authenticated user: ${user?.username || 'none'}`);
+  
+  await next();
+});
+```
+
+See: `~/workspace/source/src/fumi.ts:145`
+
+## Session Lifecycle
+
+Sessions progress through distinct phases:
+
+```typescript
+const app = new Fumi();
+
+// 1. Connection established
+app.onConnect(async (ctx, next) => {
+  console.log(`[${ctx.session.id}] Connected from ${ctx.session.remoteAddress}`);
+  await next();
+});
+
+// 2. (Optional) Authentication
+app.onAuth(async (ctx, next) => {
+  console.log(`[${ctx.session.id}] Auth attempt: ${ctx.credentials.username}`);
+  ctx.accept({ username: ctx.credentials.username });
+  await next();
+});
+
+// 3. MAIL FROM
+app.onMailFrom(async (ctx, next) => {
+  console.log(`[${ctx.session.id}] MAIL FROM: ${ctx.address.address}`);
+  await next();
+});
+
+// 4. RCPT TO (once per recipient)
+app.onRcptTo(async (ctx, next) => {
+  console.log(`[${ctx.session.id}] RCPT TO: ${ctx.address.address}`);
+  await next();
+});
+
+// 5. DATA
+app.onData(async (ctx, next) => {
+  console.log(`[${ctx.session.id}] Receiving message...`);
+  await next();
+});
+
+// 6. Connection closed
+app.onClose(async (ctx) => {
+  console.log(`[${ctx.session.id}] Session ended`);
+});
+```
+
+## Practical Examples
+
+### Session-Based Rate Limiting
+
+```typescript
+const sessionCounts = new Map<string, number>();
+
+app.onRcptTo(async (ctx, next) => {
+  const sessionId = ctx.session.id;
+  const count = (sessionCounts.get(sessionId) || 0) + 1;
+  
+  // Limit recipients per session
+  if (count > 100) {
+    ctx.reject('Too many recipients', 452);
+  }
+  
+  sessionCounts.set(sessionId, count);
+  await next();
+});
+
+app.onClose(async (ctx) => {
+  sessionCounts.delete(ctx.session.id);
+});
+```
+
+### TLS Requirement Check
+
+```typescript
+app.onMailFrom(async (ctx, next) => {
+  if (!ctx.session.secure) {
+    ctx.reject('Must use STARTTLS', 530);
+  }
+  await next();
+});
+```
+
+### Logging Complete Transaction
+
+```typescript
+app.onData(async (ctx, next) => {
+  const log = {
+    sessionId: ctx.session.id,
+    clientIp: ctx.session.remoteAddress,
+    clientHostname: ctx.session.clientHostname,
+    secure: ctx.session.secure,
+    authenticated: !!ctx.session.user,
+    user: ctx.session.user,
+    from: ctx.session.envelope.mailFrom.address,
+    to: ctx.session.envelope.rcptTo.map(r => r.address),
+    transmissionType: ctx.session.transmissionType
+  };
+  
+  console.log('Transaction:', JSON.stringify(log, null, 2));
+  await next();
+});
+```
+
+### Conditional Logic Based on Authentication
+
+```typescript
+app.onRcptTo(async (ctx, next) => {
+  const recipient = ctx.address.address;
+  
+  if (ctx.session.user) {
+    // Authenticated users can send anywhere
+    await next();
+  } else {
+    // Unauthenticated users can only send to local domains
+    if (!recipient.endsWith('@mycompany.com')) {
+      ctx.reject('Relay access denied', 550);
+    }
+    await next();
+  }
+});
+```
+
+### Access Control by IP
+
+```typescript
+const trustedIps = ['192.0.2.1', '192.0.2.2'];
+
+app.onConnect(async (ctx, next) => {
+  const isTrusted = trustedIps.includes(ctx.session.remoteAddress);
+  
+  if (!isTrusted && !ctx.session.secure) {
+    ctx.reject('TLS required for untrusted networks', 530);
+  }
+  
+  await next();
+});
+```
+
+## Type Definitions
+
+```typescript
+export interface Session {
+  id: string;
+  secure: boolean;
+  remoteAddress: string;
+  clientHostname: string;
+  openingCommand: string;
+  user: unknown;
+  envelope: Envelope;
+  transmissionType: string;
+}
+
+export interface Envelope {
+  mailFrom: Address;
+  rcptTo: Address[];
+}
+
+export interface Address {
+  address: string;
+  args: Record<string, unknown>;
+}
+```
+
+See: `~/workspace/source/src/types.ts:13`
+
+## Next Steps
+
+- Learn about [Context Objects](/concepts/context) in each phase
+- Understand [Middleware](/concepts/middleware) composition
+- Explore [Error Handling](/concepts/error-handling) strategies
