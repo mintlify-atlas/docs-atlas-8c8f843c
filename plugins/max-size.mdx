@@ -29,8 +29,8 @@ function maxSize(bytes: number): Plugin
 Import and configure the maxSize plugin with your desired byte limit:
 
 ```typescript
-import { Fumi } from "fumi";
-import { maxSize } from "fumi/plugins";
+import { Fumi } from "@puiusabin/fumi";
+import { maxSize } from "@puiusabin/fumi/plugins/max-size";
 
 // Create Fumi instance with size tracking enabled
 const app = new Fumi({ 
@@ -40,7 +40,7 @@ const app = new Fumi({
 // Add the maxSize plugin with the same limit
 app.use(maxSize(1_000_000));
 
-app.listen();
+await app.listen(2525);
 ```
 
 <Note>
@@ -57,8 +57,8 @@ If `FumiOptions.size` is not set, the plugin will not function correctly.
 ## Example with Different Limits
 
 ```typescript
-import { Fumi } from "fumi";
-import { maxSize } from "fumi/plugins";
+import { Fumi } from "@puiusabin/fumi";
+import { maxSize } from "@puiusabin/fumi/plugins/max-size";
 
 // 5 MB limit
 const FIVE_MB = 5 * 1024 * 1024;
@@ -66,7 +66,7 @@ const FIVE_MB = 5 * 1024 * 1024;
 const app = new Fumi({ size: FIVE_MB });
 app.use(maxSize(FIVE_MB));
 
-app.listen();
+await app.listen(2525);
 ```
 
 ## Error Response

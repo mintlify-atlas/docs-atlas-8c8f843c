@@ -27,7 +27,7 @@ class SMTPError extends Error {
 ### Example
 
 ```typescript
-import { SMTPError } from "fumi";
+import { SMTPError } from "@puiusabin/fumi";
 
 // Throw with default code (550)
 throw new SMTPError("Mailbox unavailable");
@@ -448,7 +448,7 @@ type Plugin = (app: Fumi) => void;
 #### Example
 
 ```typescript
-import type { Plugin } from "fumi";
+import type { Plugin } from "@puiusabin/fumi";
 
 function myPlugin(options: { prefix: string }): Plugin {
   return (app) => {
@@ -597,7 +597,7 @@ interface FumiOptions {
 ### Example
 
 ```typescript
-import { Fumi } from "fumi";
+import { Fumi } from "@puiusabin/fumi";
 
 const app = new Fumi({
   // TLS configuration

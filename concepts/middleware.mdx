@@ -10,7 +10,7 @@ Fumi uses a powerful Koa-style middleware system that lets you compose request h
 Middleware functions follow the `(ctx, next)` pattern:
 
 ```typescript
-import { Fumi } from "fumi";
+import { Fumi } from "@puiusabin/fumi";
 
 const app = new Fumi();
 
@@ -197,7 +197,7 @@ See: `~/workspace/source/src/fumi.ts:220`
 Middleware can be packaged as reusable plugins:
 
 ```typescript
-import type { Fumi } from 'fumi';
+import type { Fumi } from '@puiusabin/fumi';
 
 // Plugin function receives the Fumi instance
 export function denylist(blockedIps: string[]) {

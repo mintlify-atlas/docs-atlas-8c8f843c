@@ -28,15 +28,15 @@ The `logger` function takes no parameters and returns a Fumi plugin.
 Import and use the logger plugin in your Fumi application:
 
 ```typescript
-import { Fumi } from "fumi";
-import { logger } from "fumi/plugins";
+import { Fumi } from "@puiusabin/fumi";
+import { logger } from "@puiusabin/fumi/plugins/logger";
 
 const app = new Fumi();
 
 // Add the logger plugin
 app.use(logger());
 
-app.listen();
+await app.listen(2525);
 ```
 
 ## Example Output

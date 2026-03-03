@@ -28,7 +28,7 @@ See: `~/workspace/source/src/types.ts:3`
 ### Basic Usage
 
 ```typescript
-import { SMTPError } from 'fumi';
+import { SMTPError } from '@puiusabin/fumi';
 
 // Create error with default code (550)
 throw new SMTPError('Access denied');
@@ -343,7 +343,7 @@ app.onData(async (ctx, next) => {
 ### Plugin Error Handling
 
 ```typescript
-import type { Fumi } from 'fumi';
+import type { Fumi } from '@puiusabin/fumi';
 
 export function denylist(blockedIps: string[]) {
   return (app: Fumi) => {

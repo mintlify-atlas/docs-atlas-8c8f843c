@@ -30,15 +30,15 @@ function denylist(ips: string[]): Plugin
 Import and configure the denylist plugin with your list of blocked IPs:
 
 ```typescript
-import { Fumi } from "fumi";
-import { denylist } from "fumi/plugins";
+import { Fumi } from "@puiusabin/fumi";
+import { denylist } from "@puiusabin/fumi/plugins/denylist";
 
 const app = new Fumi();
 
 // Block specific IP addresses
 app.use(denylist(["1.2.3.4", "5.6.7.8"]));
 
-app.listen();
+await app.listen(2525);
 ```
 
 ## Dynamic Denylist Example
@@ -46,8 +46,8 @@ app.listen();
 You can build the denylist dynamically from external sources:
 
 ```typescript
-import { Fumi } from "fumi";
-import { denylist } from "fumi/plugins";
+import { Fumi } from "@puiusabin/fumi";
+import { denylist } from "@puiusabin/fumi/plugins/denylist";
 
 const app = new Fumi();
 
@@ -56,14 +56,14 @@ const blockedIPs = await loadBlockedIPsFromDatabase();
 
 app.use(denylist(blockedIPs));
 
-app.listen();
+await app.listen(2525);
 ```
 
 ## Multiple IP Blocks
 
 ```typescript
-import { Fumi } from "fumi";
-import { denylist } from "fumi/plugins";
+import { Fumi } from "@puiusabin/fumi";
+import { denylist } from "@puiusabin/fumi/plugins/denylist";
 
 const app = new Fumi();
 
@@ -75,7 +75,7 @@ const testServers = ["10.0.0.50", "10.0.0.51"];
 
 app.use(denylist([...spamSources, ...testServers]));
 
-app.listen();
+await app.listen(2525);
 ```
 
 ## Error Response
@@ -159,5 +159,5 @@ app.use((app) => {
 // Later, add IPs to the denylist
 blockedIPs.add("5.6.7.8");
 
-app.listen();
+await app.listen(2525);
 ```

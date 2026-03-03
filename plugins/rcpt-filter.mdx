@@ -31,22 +31,22 @@ function rcptFilter(allowedDomains: string[]): Plugin
 Import and configure the rcptFilter plugin with your allowed domains:
 
 ```typescript
-import { Fumi } from "fumi";
-import { rcptFilter } from "fumi/plugins";
+import { Fumi } from "@puiusabin/fumi";
+import { rcptFilter } from "@puiusabin/fumi/plugins/rcpt-filter";
 
 const app = new Fumi();
 
 // Only accept recipients from these domains
 app.use(rcptFilter(["mycompany.com", "subsidiary.com"]));
 
-app.listen();
+await app.listen(2525);
 ```
 
 ## Single Domain Example
 
 ```typescript
-import { Fumi } from "fumi";
-import { rcptFilter } from "fumi/plugins";
+import { Fumi } from "@puiusabin/fumi";
+import { rcptFilter } from "@puiusabin/fumi/plugins/rcpt-filter";
 
 const app = new Fumi();
 
@@ -58,14 +58,14 @@ app.onData(async (ctx) => {
   // All recipients are guaranteed to be @example.com
 });
 
-app.listen();
+await app.listen(2525);
 ```
 
 ## Corporate Email System Example
 
 ```typescript
-import { Fumi } from "fumi";
-import { rcptFilter } from "fumi/plugins";
+import { Fumi } from "@puiusabin/fumi";
+import { rcptFilter } from "@puiusabin/fumi/plugins/rcpt-filter";
 
 const app = new Fumi();
 
@@ -79,7 +79,7 @@ const corporateDomains = [
 
 app.use(rcptFilter(corporateDomains));
 
-app.listen();
+await app.listen(2525);
 ```
 
 ## Error Response
@@ -166,8 +166,10 @@ S: 250 OK
 You can combine rcptFilter with other plugins for comprehensive filtering:
 
 ```typescript
-import { Fumi } from "fumi";
-import { rcptFilter, senderBlock, requireTls } from "fumi/plugins";
+import { Fumi } from "@puiusabin/fumi";
+import { rcptFilter } from "@puiusabin/fumi/plugins/rcpt-filter";
+import { senderBlock } from "@puiusabin/fumi/plugins/sender-block";
+import { requireTls } from "@puiusabin/fumi/plugins/require-tls";
 
 const app = new Fumi();
 
@@ -180,7 +182,7 @@ app.use(senderBlock(["spam.example", "malicious.org"]));
 // Only accept recipients from trusted domains
 app.use(rcptFilter(["mycompany.com"]));
 
-app.listen();
+await app.listen(2525);
 ```
 
 ## Performance

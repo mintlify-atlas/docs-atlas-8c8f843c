@@ -10,7 +10,7 @@ The `Fumi` class is the core of the Fumi SMTP framework. It provides methods to 
 Creates a new Fumi SMTP server instance.
 
 ```typescript
-import { Fumi } from "fumi";
+import { Fumi } from "@puiusabin/fumi";
 
 const app = new Fumi(options);
 ```
@@ -318,7 +318,7 @@ process.on("SIGTERM", async () => {
 ## Complete Example
 
 ```typescript
-import { Fumi } from "fumi";
+import { Fumi } from "@puiusabin/fumi";
 import { logger } from "fumi/plugins/logger";
 import { denylist } from "fumi/plugins/denylist";
 

@@ -26,21 +26,19 @@ The `requireTls` function takes no parameters and returns a Fumi plugin.
 Import and use the requireTls plugin in your Fumi application:
 
 ```typescript
-import { Fumi } from "fumi";
-import { requireTls } from "fumi/plugins";
+import { Fumi } from "@puiusabin/fumi";
+import { requireTls } from "@puiusabin/fumi/plugins/require-tls";
 
 const app = new Fumi({
   // Enable STARTTLS with certificates
-  tls: {
-    key: await Bun.file("./key.pem").text(),
-    cert: await Bun.file("./cert.pem").text(),
-  }
+  key: await Bun.file("./key.pem").text(),
+  cert: await Bun.file("./cert.pem").text(),
 });
 
 // Require TLS for all mail transactions
 app.use(requireTls());
 
-app.listen();
+await app.listen(2525);
 ```
 
 ## How It Works
@@ -88,10 +86,8 @@ This plugin provides middleware-level TLS enforcement at the MAIL FROM stage. Fo
 ```typescript
 const app = new Fumi({ 
   requireTLS: true,
-  tls: {
-    key: await Bun.file("./key.pem").text(),
-    cert: await Bun.file("./cert.pem").text(),
-  }
+  key: await Bun.file("./key.pem").text(),
+  cert: await Bun.file("./cert.pem").text(),
 });
 ```
 

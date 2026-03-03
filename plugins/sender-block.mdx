@@ -31,22 +31,22 @@ function senderBlock(domains: string[]): Plugin
 Import and configure the senderBlock plugin with your blocked domains:
 
 ```typescript
-import { Fumi } from "fumi";
-import { senderBlock } from "fumi/plugins";
+import { Fumi } from "@puiusabin/fumi";
+import { senderBlock } from "@puiusabin/fumi/plugins/sender-block";
 
 const app = new Fumi();
 
 // Block mail from these sender domains
 app.use(senderBlock(["spam.example", "blocked.org"]));
 
-app.listen();
+await app.listen(2525);
 ```
 
 ## Spam Prevention Example
 
 ```typescript
-import { Fumi } from "fumi";
-import { senderBlock } from "fumi/plugins";
+import { Fumi } from "@puiusabin/fumi";
+import { senderBlock } from "@puiusabin/fumi/plugins/sender-block";
 
 const app = new Fumi();
 
@@ -59,14 +59,14 @@ const spamDomains = [
 
 app.use(senderBlock(spamDomains));
 
-app.listen();
+await app.listen(2525);
 ```
 
 ## Dynamic Block List Example
 
 ```typescript
-import { Fumi } from "fumi";
-import { senderBlock } from "fumi/plugins";
+import { Fumi } from "@puiusabin/fumi";
+import { senderBlock } from "@puiusabin/fumi/plugins/sender-block";
 
 const app = new Fumi();
 
@@ -75,7 +75,7 @@ const blockedDomains = await loadBlockedDomainsFromDatabase();
 
 app.use(senderBlock(blockedDomains));
 
-app.listen();
+await app.listen(2525);
 ```
 
 ## Error Response
@@ -166,8 +166,9 @@ This prevents the blocked sender from:
 Use both IP and domain blocking for comprehensive protection:
 
 ```typescript
-import { Fumi } from "fumi";
-import { denylist, senderBlock } from "fumi/plugins";
+import { Fumi } from "@puiusabin/fumi";
+import { denylist } from "@puiusabin/fumi/plugins/denylist";
+import { senderBlock } from "@puiusabin/fumi/plugins/sender-block";
 
 const app = new Fumi();
 
@@ -177,7 +178,7 @@ app.use(denylist(["192.168.1.100", "10.0.0.50"]));
 // Block by sender domain
 app.use(senderBlock(["spam.example", "malicious.org"]));
 
-app.listen();
+await app.listen(2525);
 ```
 
 ## Allowing Specific Senders (Allowlist Pattern)
@@ -185,7 +186,7 @@ app.listen();
 To create an allowlist (inverse behavior), write a custom plugin:
 
 ```typescript
-import { Fumi, type Plugin } from "fumi";
+import { Fumi, type Plugin } from "@puiusabin/fumi";
 
 function senderAllow(allowedDomains: string[]): Plugin {
   const allowed = new Set(allowedDomains.map((d) => d.toLowerCase()));
@@ -205,7 +206,7 @@ const app = new Fumi();
 // Only accept mail from trusted domains
 app.use(senderAllow(["trusted.com", "partner.org"]));
 
-app.listen();
+await app.listen(2525);
 ```
 
 ## Updating the Block List at Runtime
@@ -213,7 +214,7 @@ app.listen();
 To update the block list dynamically, maintain your own Set:
 
 ```typescript
-import { Fumi } from "fumi";
+import { Fumi } from "@puiusabin/fumi";
 
 const app = new Fumi();
 
@@ -237,7 +238,7 @@ blockedDomains.add("new-spam.com");
 // Or remove domains
 blockedDomains.delete("no-longer-spam.com");
 
-app.listen();
+await app.listen(2525);
 ```
 
 ## Performance

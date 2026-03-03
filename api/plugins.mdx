@@ -22,7 +22,7 @@ Plugins are registered using the `app.use()` method and can register middleware 
 A simple plugin that registers middleware on one or more SMTP phases:
 
 ```typescript
-import type { Plugin } from "fumi";
+import type { Plugin } from "@puiusabin/fumi";
 
 function myPlugin(): Plugin {
   return (app) => {
@@ -42,7 +42,7 @@ app.use(myPlugin());
 Plugins can accept configuration options using a factory function pattern:
 
 ```typescript
-import type { Plugin } from "fumi";
+import type { Plugin } from "@puiusabin/fumi";
 
 interface LoggerOptions {
   prefix?: string;
@@ -81,7 +81,7 @@ app.use(logger({ prefix: "[MyServer]", verbose: true }));
 Plugins can register middleware on multiple SMTP phases:
 
 ```typescript
-import type { Plugin } from "fumi";
+import type { Plugin } from "@puiusabin/fumi";
 
 function rateLimiter(maxPerMinute: number): Plugin {
   const connections = new Map<string, number[]>();
@@ -126,8 +126,8 @@ app.use(rateLimiter(10)); // Max 10 connections per minute per IP
 ### Single Plugin
 
 ```typescript
-import { Fumi } from "fumi";
-import { logger } from "fumi/plugins/logger";
+import { Fumi } from "@puiusabin/fumi";
+import { logger } from "@puiusabin/fumi/plugins/logger";
 
 const app = new Fumi();
 app.use(logger());
@@ -138,10 +138,10 @@ app.use(logger());
 Chain multiple plugins using method chaining:
 
 ```typescript
-import { Fumi } from "fumi";
-import { logger } from "fumi/plugins/logger";
-import { denylist } from "fumi/plugins/denylist";
-import { maxSize } from "fumi/plugins/max-size";
+import { Fumi } from "@puiusabin/fumi";
+import { logger } from "@puiusabin/fumi/plugins/logger";
+import { denylist } from "@puiusabin/fumi/plugins/denylist";
+import { maxSize } from "@puiusabin/fumi/plugins/max-size";
 
 const app = new Fumi({ size: 10_000_000 });
 
@@ -171,7 +171,7 @@ Fumi includes several built-in plugins for common use cases:
 Logs SMTP phase events to stdout.
 
 ```typescript
-import { logger } from "fumi/plugins/logger";
+import { logger } from "@puiusabin/fumi/plugins/logger";
 
 app.use(logger());
 ```
@@ -185,7 +185,7 @@ app.use(logger());
 Blocks connections from specific IP addresses.
 
 ```typescript
-import { denylist } from "fumi/plugins/denylist";
+import { denylist } from "@puiusabin/fumi/plugins/denylist";
 
 app.use(denylist([
   "192.168.1.100",
@@ -202,7 +202,7 @@ app.use(denylist([
 Rejects messages that exceed a size limit.
 
 ```typescript
-import { maxSize } from "fumi/plugins/max-size";
+import { maxSize } from "@puiusabin/fumi/plugins/max-size";
 
 const app = new Fumi({ size: 10_000_000 });
 app.use(maxSize(10_000_000)); // 10MB
@@ -219,7 +219,7 @@ app.use(maxSize(10_000_000)); // 10MB
 Enforces TLS encryption before allowing certain commands.
 
 ```typescript
-import { requireTls } from "fumi/plugins/require-tls";
+import { requireTls } from "@puiusabin/fumi/plugins/require-tls";
 
 app.use(requireTls());
 ```
@@ -233,7 +233,7 @@ app.use(requireTls());
 Blocks specific sender addresses or domains.
 
 ```typescript
-import { senderBlock } from "fumi/plugins/sender-block";
+import { senderBlock } from "@puiusabin/fumi/plugins/sender-block";
 
 app.use(senderBlock([
   "spam@example.com",
@@ -250,7 +250,7 @@ app.use(senderBlock([
 Filters recipient addresses based on custom logic.
 
 ```typescript
-import { rcptFilter } from "fumi/plugins/rcpt-filter";
+import { rcptFilter } from "@puiusabin/fumi/plugins/rcpt-filter";
 
 app.use(rcptFilter(async (address) => {
   // Only accept mail for specific domains
@@ -383,7 +383,7 @@ app.use(securityBundle({
 7. **Export types**: Export TypeScript types for plugin options to improve developer experience.
 
 ```typescript
-import type { Plugin } from "fumi";
+import type { Plugin } from "@puiusabin/fumi";
 
 export interface MyPluginOptions {
   enabled?: boolean;
