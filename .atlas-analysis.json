@@ -1,0 +1,94 @@
+{
+  "projectType": "framework",
+  "projectName": "Fumi",
+  "projectDescription": "Modern, ultrafast, lightweight SMTP Server Framework built on Bun with composable middleware.",
+  "theme": "aspen",
+  "primaryColor": "#2563eb",
+  "lightColor": "#60a5fa",
+  "darkColor": "#1e40af",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "installation",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/middleware",
+              "concepts/context",
+              "concepts/sessions",
+              "concepts/error-handling"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/authentication",
+              "guides/tls-security",
+              "guides/message-processing",
+              "guides/building-plugins"
+            ]
+          },
+          {
+            "group": "Built-in Plugins",
+            "pages": [
+              "plugins/logger",
+              "plugins/max-size",
+              "plugins/require-tls",
+              "plugins/denylist",
+              "plugins/rcpt-filter",
+              "plugins/sender-block"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Core API",
+            "pages": [
+              "api/fumi",
+              "api/types",
+              "api/plugins"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Koa-style middleware chains per SMTP phase",
+    "Simple plugin system with no registry or lifecycle hooks",
+    "Built-in plugins for common tasks (auth, filtering, logging)",
+    "TypeScript-first with complete type safety",
+    "Native Bun performance with zero Node.js overhead",
+    "Composable middleware for connect, auth, mailFrom, rcptTo, data, and close phases"
+  ],
+  "publicApiSurface": [
+    "Fumi - Main framework class",
+    "use() - Register plugins",
+    "onConnect() - Add connect phase middleware",
+    "onAuth() - Add authentication middleware",
+    "onMailFrom() - Add MAIL FROM phase middleware",
+    "onRcptTo() - Add RCPT TO phase middleware",
+    "onData() - Add data phase middleware",
+    "onClose() - Add close phase middleware",
+    "listen() - Start SMTP server",
+    "close() - Stop SMTP server",
+    "logger() - Logging plugin",
+    "maxSize() - Message size limit plugin",
+    "requireTls() - TLS enforcement plugin",
+    "denylist() - IP blocking plugin",
+    "rcptFilter() - Recipient filtering plugin",
+    "senderBlock() - Sender blocking plugin"
+  ]
+}
